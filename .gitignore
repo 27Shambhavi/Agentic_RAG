@@ -1,0 +1,41 @@
+# Environment
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local databases / vector stores
+chroma/
+chroma_db/
+*.db
+
+# Temporary files
+tmp/
+temp/
+
+# Uploaded documents
+uploads/
+data/uploads/
+
+# Secrets
+*.pem
+*.key

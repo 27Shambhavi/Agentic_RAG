@@ -1,0 +1,593 @@
+/* =========================================================
+   AGENTIC RAG — CLEAN APP UI
+========================================================= */
+
+
+/* =========================================================
+   GLOBAL
+========================================================= */
+
+.stApp {
+
+    background:
+        radial-gradient(
+            circle at 85% 0%,
+            rgba(99,102,241,0.07),
+            transparent 28%
+        ),
+        radial-gradient(
+            circle at 0% 100%,
+            rgba(59,130,246,0.045),
+            transparent 25%
+        ),
+        #080b12 !important;
+
+    color: #e2e8f0 !important;
+}
+
+
+/* =========================================================
+   MAIN CONTAINER
+========================================================= */
+
+.block-container {
+
+    max-width: 1500px !important;
+
+    padding-top: 1rem !important;
+    padding-bottom: 1.5rem !important;
+
+    padding-left: 1.5rem !important;
+    padding-right: 1.5rem !important;
+}
+
+
+/* =========================================================
+   HIDE STREAMLIT DEFAULTS
+========================================================= */
+
+#MainMenu {
+    visibility: hidden !important;
+}
+
+footer {
+    visibility: hidden !important;
+}
+
+header {
+    background: transparent !important;
+}
+
+
+/* =========================================================
+   TYPOGRAPHY
+========================================================= */
+
+h1,
+h2,
+h3 {
+
+    color: #f1f5f9 !important;
+}
+
+h1 {
+
+    font-size: 25px !important;
+    font-weight: 750 !important;
+
+    letter-spacing: -0.5px !important;
+
+    margin-bottom: 2px !important;
+}
+
+h2 {
+
+    font-size: 20px !important;
+    font-weight: 700 !important;
+}
+
+h3 {
+
+    font-size: 15px !important;
+    font-weight: 700 !important;
+}
+
+p {
+
+    line-height: 1.45;
+}
+
+.stCaption {
+
+    color: #718096 !important;
+
+    font-size: 11px !important;
+}
+
+
+/* =========================================================
+   COLUMNS
+========================================================= */
+
+[data-testid="column"] {
+
+    min-width: 0 !important;
+}
+
+
+/* =========================================================
+   SIDEBAR
+========================================================= */
+
+section[data-testid="stSidebar"] {
+
+    background:
+        linear-gradient(
+            180deg,
+            #10131d 0%,
+            #0a0d14 100%
+        ) !important;
+
+    border-right:
+        1px solid
+        rgba(255,255,255,0.07) !important;
+}
+
+
+/* Sidebar inner spacing */
+
+section[data-testid="stSidebar"] > div {
+
+    padding-top: 1rem !important;
+}
+
+
+/* =========================================================
+   SIDEBAR BUTTONS
+========================================================= */
+
+section[data-testid="stSidebar"]
+.stButton {
+
+    margin-bottom: 6px !important;
+}
+
+
+section[data-testid="stSidebar"]
+.stButton > button {
+
+    width: 100% !important;
+
+    min-height: 38px !important;
+
+    padding: 8px 12px !important;
+
+    text-align: left !important;
+
+    border-radius: 9px !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.055) !important;
+
+    background:
+        rgba(255,255,255,0.025) !important;
+
+    color: #dbe4f0 !important;
+
+    font-size: 12px !important;
+
+    font-weight: 600 !important;
+
+    transition:
+        all 0.15s ease !important;
+}
+
+
+section[data-testid="stSidebar"]
+.stButton > button:hover {
+
+    background:
+        rgba(99,102,241,0.12) !important;
+
+    border-color:
+        rgba(99,102,241,0.35) !important;
+
+    transform:
+        translateX(2px);
+}
+
+
+/* =========================================================
+   SIDEBAR DIVIDER
+========================================================= */
+
+section[data-testid="stSidebar"] hr {
+
+    margin-top: 12px !important;
+    margin-bottom: 12px !important;
+
+    border-color:
+        rgba(255,255,255,0.06) !important;
+}
+
+
+/* =========================================================
+   SIDEBAR ACTIVE WORKSPACE
+========================================================= */
+
+section[data-testid="stSidebar"]
+[data-testid="stVerticalBlockBorderWrapper"] {
+
+    background:
+        rgba(34,197,94,0.055) !important;
+
+    border:
+        1px solid
+        rgba(34,197,94,0.16) !important;
+
+    border-radius: 10px !important;
+
+    padding: 8px !important;
+}
+
+
+/* =========================================================
+   MAIN PANELS
+========================================================= */
+
+div[data-testid="stVerticalBlockBorderWrapper"] {
+
+    background:
+        rgba(15,23,42,0.40) !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.065) !important;
+
+    border-radius: 13px !important;
+
+    padding: 8px !important;
+
+    box-shadow:
+        0 8px 25px
+        rgba(0,0,0,0.10) !important;
+}
+
+
+/* =========================================================
+   BUTTONS
+========================================================= */
+
+.stButton > button {
+
+    min-height: 36px !important;
+
+    border-radius: 9px !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.08) !important;
+
+    background:
+        rgba(255,255,255,0.035) !important;
+
+    color: #e2e8f0 !important;
+
+    font-size: 12px !important;
+
+    font-weight: 600 !important;
+
+    transition:
+        all 0.15s ease !important;
+}
+
+
+.stButton > button:hover {
+
+    background:
+        rgba(99,102,241,0.10) !important;
+
+    border-color:
+        rgba(99,102,241,0.40) !important;
+}
+
+
+/* =========================================================
+   PRIMARY BUTTON
+========================================================= */
+
+.stButton > button[kind="primary"] {
+
+    background:
+        linear-gradient(
+            135deg,
+            #4f46e5,
+            #6366f1
+        ) !important;
+
+    border: none !important;
+
+    color: white !important;
+}
+
+
+/* =========================================================
+   CHAT MESSAGE
+========================================================= */
+
+[data-testid="stChatMessage"] {
+
+    border-radius: 14px !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.055) !important;
+
+    background:
+        rgba(15,23,42,0.42) !important;
+
+    margin-bottom: 9px !important;
+
+    padding: 10px 12px !important;
+}
+
+
+/* =========================================================
+   CHAT INPUT
+========================================================= */
+
+[data-testid="stChatInput"] {
+
+    border-radius: 13px !important;
+
+    background:
+        rgba(15,23,42,0.92) !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.09) !important;
+}
+
+
+[data-testid="stChatInput"] textarea {
+
+    color: #e2e8f0 !important;
+
+    font-size: 13px !important;
+}
+
+
+/* =========================================================
+   TEXT INPUT
+========================================================= */
+
+div[data-baseweb="input"] > div {
+
+    background:
+        rgba(255,255,255,0.035) !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.07) !important;
+
+    border-radius: 9px !important;
+}
+
+
+/* =========================================================
+   SELECTBOX
+========================================================= */
+
+div[data-baseweb="select"] > div {
+
+    background:
+        rgba(255,255,255,0.035) !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.07) !important;
+
+    border-radius: 9px !important;
+}
+
+
+/* =========================================================
+   FILE UPLOADER
+========================================================= */
+
+[data-testid="stFileUploaderDropzone"] {
+
+    background:
+        rgba(255,255,255,0.015) !important;
+
+    border:
+        1px dashed
+        rgba(148,163,184,0.23) !important;
+
+    border-radius: 11px !important;
+
+    transition:
+        all 0.15s ease !important;
+}
+
+
+[data-testid="stFileUploaderDropzone"]:hover {
+
+    background:
+        rgba(99,102,241,0.035) !important;
+
+    border-color:
+        rgba(99,102,241,0.45) !important;
+}
+
+
+/* =========================================================
+   ALERTS
+========================================================= */
+
+[data-testid="stAlert"] {
+
+    border-radius: 10px !important;
+
+    font-size: 12px !important;
+}
+
+
+/* =========================================================
+   EXPANDER
+========================================================= */
+
+[data-testid="stExpander"] {
+
+    border:
+        1px solid
+        rgba(255,255,255,0.065) !important;
+
+    border-radius: 10px !important;
+
+    background:
+        rgba(255,255,255,0.015) !important;
+}
+
+
+/* =========================================================
+   AUDIO
+========================================================= */
+
+audio {
+
+    width: 100% !important;
+
+    border-radius: 10px !important;
+}
+
+
+/* =========================================================
+   IMAGES
+========================================================= */
+
+[data-testid="stImage"] img {
+
+    width: 100% !important;
+
+    border-radius: 11px !important;
+
+    border:
+        1px solid
+        rgba(255,255,255,0.08) !important;
+}
+
+
+/* =========================================================
+   PROGRESS
+========================================================= */
+
+[data-testid="stProgressBar"] {
+
+    margin-top: 5px !important;
+
+    margin-bottom: 5px !important;
+}
+
+
+/* =========================================================
+   DIVIDER
+========================================================= */
+
+hr {
+
+    border-color:
+        rgba(255,255,255,0.055) !important;
+
+    margin-top: 12px !important;
+
+    margin-bottom: 12px !important;
+}
+
+
+/* =========================================================
+   SCROLLBAR
+========================================================= */
+
+::-webkit-scrollbar {
+
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+
+    background:
+        rgba(148,163,184,0.20);
+
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+
+    background:
+        rgba(148,163,184,0.30);
+}
+
+
+/* =========================================================
+   REMOVE OLD CUSTOM HTML UI
+========================================================= */
+
+.app-header,
+.app-title,
+.app-subtitle,
+.hero-subtitle,
+.workspace-tip,
+.tip-title,
+.tip-text,
+.sidebar-brand,
+.sidebar-logo,
+.sidebar-title,
+.sidebar-subtitle,
+.active-tool,
+.active-dot,
+.active-label,
+.active-name {
+
+    display: none !important;
+}
+
+
+/* =========================================================
+   MOBILE
+========================================================= */
+
+@media (max-width: 1000px) {
+
+    .block-container {
+
+        padding-left: 1rem !important;
+
+        padding-right: 1rem !important;
+    }
+
+    h1 {
+
+        font-size: 22px !important;
+    }
+}
+
+
+@media (max-width: 700px) {
+
+    .block-container {
+
+        padding-top: 0.8rem !important;
+    }
+
+    [data-testid="stChatMessage"] {
+
+        padding: 8px !important;
+    }
+}

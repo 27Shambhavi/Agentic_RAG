@@ -1,0 +1,6 @@
+[
+  {
+    "question": "What is this system designed to answer?",
+    "expected_answer": "Questions grounded in uploaded documents and multimodal inputs."
+  }
+]
