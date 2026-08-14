@@ -80,64 +80,6 @@ def render_voice_input():
                     {
                         "role": "user",
                         "content": transcript,
-                        "source": "voice",
-                    }
-                )
-
-                # -----------------------------------------
-                # SEND TO SAME CHAT PIPELINE
-                # -----------------------------------------
-
-                selected_document = st.session_state.get(
-                    "selected_document",
-                    "",
-                )
-
-                document_context = st.session_state.get(
-                    "document_context",
-                    False,
-                )
-
-                with st.spinner("🤔 Thinking..."):
-
-                    response = api_client.chat(
-                        transcript,
-                        selected_document=selected_document,
-                        document_context=document_context,
-                    )
-
-                answer = response.get(
-                    "answer",
-                    "",
-                )
-
-                route = response.get(
-                    "route",
-                    "general",
-                )
-
-                sources = response.get(
-                    "sources",
-                    [],
-                )
-
-                if not answer:
-
-                    answer = (
-                        "Sorry, I couldn't generate an answer."
-                    )
-
-                # -----------------------------------------
-                # SAVE ASSISTANT RESPONSE
-                # -----------------------------------------
-
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": answer,
-                        "route": route,
-                        "sources": sources,
-                        "source": "voice",
                     }
                 )
 

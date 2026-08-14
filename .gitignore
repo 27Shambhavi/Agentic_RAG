@@ -35,6 +35,8 @@ temp/
 # Uploaded documents
 uploads/
 data/uploads/
+data/documents/
+data/images/
 
 # Secrets
 *.pem

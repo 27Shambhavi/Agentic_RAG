@@ -3,7 +3,9 @@ from pathlib import Path
 import pymupdf
 
 
-def load_pdf(file_path: str) -> list[dict]:
+def load_pdf(
+    file_path: str,
+) -> list[dict]:
 
     path = Path(file_path)
 
@@ -14,28 +16,38 @@ def load_pdf(file_path: str) -> list[dict]:
 
     if path.suffix.lower() != ".pdf":
         raise ValueError(
-            "Only PDF files are supported currently."
+            "Only PDF files are supported."
         )
 
-    document = pymupdf.open(file_path)
+    document = pymupdf.open(
+        file_path
+    )
 
     pages = []
 
-    for page_number, page in enumerate(document):
+    try:
 
-        text = page.get_text("text").strip()
+        for page_number, page in enumerate(
+            document
+        ):
 
-        if not text:
-            continue
+            text = page.get_text(
+                "text"
+            ).strip()
 
-        pages.append(
-            {
-                "text": text,
-                "page": page_number + 1,
-                "source": path.name,
-            }
-        )
+            if not text:
+                continue
 
-    document.close()
+            pages.append(
+                {
+                    "text": text,
+                    "page": page_number + 1,
+                    "source": path.name,
+                }
+            )
+
+    finally:
+
+        document.close()
 
     return pages

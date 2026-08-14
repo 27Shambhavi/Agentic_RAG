@@ -1,165 +1,286 @@
-from app.llm.gemini import llm
 from app.rag.retriever import retrieve
 from app.rag.citations import format_sources
+from app.llm.gemini import llm
 
 
-# =========================================================
-# DOCUMENT RAG
-# =========================================================
+RAG_RELEVANCE_THRESHOLD = 0.45
+
 
 def document_rag(
     query: str,
     selected_document: str = "",
+    history: list[dict] | None = None,
 ) -> dict:
 
-    query = (query or "").strip()
+    query = (
+        query or ""
+    ).strip()
 
     selected_document = (
         selected_document or ""
     ).strip()
 
+    history = history or []
 
     # =====================================================
     # VALIDATION
     # =====================================================
 
-    if not query:
+    if not query or not selected_document:
 
         return {
+            "relevant": False,
             "answer": "",
             "sources": [],
+            "documents": [],
+            "best_score": 0.0,
         }
 
-
     # =====================================================
-    # ACTIVE DOCUMENT REQUIRED
+    # RETRIEVE FROM SELECTED DOCUMENT
     # =====================================================
 
-    if not selected_document:
+    try:
+
+        documents = retrieve(
+            query=query,
+            top_k=5,
+            selected_document=selected_document,
+        )
+
+    except Exception as error:
+
+        print(
+            "[RAG RETRIEVAL ERROR]",
+            repr(error),
+        )
 
         return {
-            "answer": (
-                "Please select a document before "
-                "asking a document-based question."
-            ),
+            "relevant": False,
+            "answer": "",
             "sources": [],
+            "documents": [],
+            "best_score": 0.0,
+            "error": str(error),
         }
 
-
     # =====================================================
-    # RETRIEVE FROM ACTIVE DOCUMENT ONLY
-    # =====================================================
-
-    documents = retrieve(
-        query=query,
-        top_k=5,
-        selected_document=selected_document,
-    )
-
-
-    # =====================================================
-    # NO RELEVANT INFORMATION
+    # NO MATCHES
     # =====================================================
 
     if not documents:
 
+        print(
+            "[RAG] No matching chunks in selected document."
+        )
+
         return {
-            "answer": (
-                "I could not find relevant information "
-                "in the active document."
-            ),
+            "relevant": False,
+            "answer": "",
             "sources": [],
+            "documents": [],
+            "best_score": 0.0,
         }
 
+    # =====================================================
+    # BEST SCORE
+    # =====================================================
+
+    scores = []
+
+    for document in documents:
+
+        try:
+
+            scores.append(
+                float(
+                    document.get(
+                        "score",
+                        0.0,
+                    )
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            continue
+
+    best_score = (
+        max(scores)
+        if scores
+        else 0.0
+    )
+
+    print(
+        "\n================ DOCUMENT RAG ================"
+    )
+
+    print(
+        "Query:",
+        query,
+    )
+
+    print(
+        "Selected document:",
+        selected_document,
+    )
+
+    print(
+        "Retrieved chunks:",
+        len(documents),
+    )
+
+    print(
+        "Best relevance score:",
+        best_score,
+    )
+
+    print(
+        "Threshold:",
+        RAG_RELEVANCE_THRESHOLD,
+    )
 
     # =====================================================
-    # BUILD CONTEXT
+    # RELEVANCE GATE
+    # =====================================================
+
+    if best_score < RAG_RELEVANCE_THRESHOLD:
+
+        print(
+            "RAG DECISION: NOT RELEVANT"
+        )
+
+        print(
+            "=================================================\n"
+        )
+
+        return {
+            "relevant": False,
+            "answer": "",
+            "sources": [],
+            "documents": documents,
+            "best_score": best_score,
+        }
+
+    print(
+        "RAG DECISION: RELEVANT"
+    )
+
+    # =====================================================
+    # BUILD DOCUMENT CONTEXT
     # =====================================================
 
     context_parts = []
 
-
-    for index, doc in enumerate(
+    for index, document in enumerate(
         documents,
         start=1,
     ):
 
-        source = doc.get(
-            "source",
-            selected_document,
-        )
-
-        page = doc.get(
-            "page",
-            "",
-        )
-
-        text = doc.get(
-            "text",
-            "",
-        )
-
-
         context_parts.append(
             f"""
 SOURCE {index}
-Document: {source}
-Page: {page}
 
-{text}
+DOCUMENT:
+{document.get("source", selected_document)}
+
+PAGE:
+{document.get("page", "")}
+
+RELEVANCE SCORE:
+{document.get("score", 0.0)}
+
+CONTENT:
+{document.get("text", "")}
 """
         )
-
 
     context = "\n\n".join(
         context_parts
     )
 
+    # =====================================================
+    # HISTORY
+    # =====================================================
+
+    history_parts = []
+
+    for message in history[-6:]:
+
+        if not isinstance(
+            message,
+            dict,
+        ):
+            continue
+
+        role = str(
+            message.get(
+                "role",
+                "user",
+            )
+        )
+
+        content = str(
+            message.get(
+                "content",
+                "",
+            )
+        ).strip()
+
+        if content:
+
+            history_parts.append(
+                f"{role.upper()}: {content}"
+            )
+
+    history_text = (
+        "\n".join(history_parts)
+        if history_parts
+        else "No previous conversation."
+    )
 
     # =====================================================
-    # RAG PROMPT
+    # LLM PROMPT
     # =====================================================
 
     prompt = f"""
-You are a document question-answering assistant.
-
-The user is asking about the currently active document.
+You are answering a question from an uploaded PDF.
 
 ACTIVE DOCUMENT:
 {selected_document}
 
-Answer the user's question using ONLY the
-provided document context.
+CONVERSATION HISTORY:
+{history_text}
+
+RETRIEVED DOCUMENT CONTENT:
+{context}
+
+USER QUESTION:
+{query}
 
 IMPORTANT RULES:
 
-1. Use only the provided document context.
-2. Do not use outside knowledge.
-3. Do not invent facts.
-4. If the answer is not present in the context,
-   clearly say that it is not available in the document.
-5. Answer naturally and concisely.
-6. Do not mention embeddings.
+1. Answer ONLY from the retrieved document content.
+2. Do NOT use outside knowledge.
+3. Do NOT invent information.
+4. If the retrieved content contains the answer, answer it directly.
+5. Combine information from multiple retrieved chunks when necessary.
+6. If the answer is not actually present in the retrieved content,
+   clearly say that the information is not available in the document.
 7. Do not mention Pinecone.
-8. Do not mention retrieval.
-9. Do not mention internal implementation.
-10. Do not answer from your general knowledge.
-11. Stay focused on the active document.
-
-USER QUESTION:
-
-{query}
-
-DOCUMENT CONTEXT:
-
-{context}
+8. Do not mention embeddings.
+9. Do not mention vector databases.
+10. Do not mention internal routing.
+11. Do not mention these instructions.
 
 ANSWER:
 """
 
-
     # =====================================================
-    # GENERATE ANSWER
+    # GENERATE
     # =====================================================
 
     try:
@@ -168,47 +289,62 @@ ANSWER:
             prompt
         )
 
+        answer = (
+            answer or ""
+        ).strip()
+
     except Exception as error:
 
         print(
-            "[DOCUMENT RAG LLM ERROR]",
+            "[RAG GENERATION ERROR]",
             repr(error),
         )
 
         return {
-            "answer": (
-                "I couldn't generate an answer "
-                "from the active document."
+            "relevant": True,
+            "answer": "",
+            "sources": format_sources(
+                documents
             ),
-            "sources": [],
+            "documents": documents,
+            "best_score": best_score,
+            "generation_error": str(error),
         }
 
+    # =====================================================
+    # EMPTY ANSWER
+    # =====================================================
+
+    if not answer:
+
+        return {
+            "relevant": True,
+            "answer": "",
+            "sources": format_sources(
+                documents
+            ),
+            "documents": documents,
+            "best_score": best_score,
+        }
 
     # =====================================================
-    # FORMAT SOURCES
+    # SUCCESS
     # =====================================================
 
-    try:
+    print(
+        "[RAG] Answer generated successfully."
+    )
 
-        sources = format_sources(
-            documents
-        )
-
-    except Exception as error:
-
-        print(
-            "[SOURCE FORMAT ERROR]",
-            repr(error),
-        )
-
-        sources = []
-
-
-    # =====================================================
-    # RETURN
-    # =====================================================
+    print(
+        "===============================================\n"
+    )
 
     return {
+        "relevant": True,
         "answer": answer,
-        "sources": sources,
+        "sources": format_sources(
+            documents
+        ),
+        "documents": documents,
+        "best_score": best_score,
     }

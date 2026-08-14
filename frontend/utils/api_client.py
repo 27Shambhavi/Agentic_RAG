@@ -2,7 +2,7 @@ import requests
 
 
 # =========================================================
-# DEFAULT API
+# DEFAULT BACKEND API
 # =========================================================
 
 DEFAULT_API_URL = "http://127.0.0.1:8000"
@@ -16,11 +16,10 @@ class APIClient:
 
     def __init__(
         self,
-        base_url: str = DEFAULT_API_URL
+        base_url: str = DEFAULT_API_URL,
     ):
 
         self.base_url = base_url.rstrip("/")
-
 
     # =====================================================
     # CHAT
@@ -31,30 +30,110 @@ class APIClient:
         message: str,
         selected_document: str = "",
         document_context: bool = False,
+        ocr_text: str = "",
+        history: list[dict] | None = None,
+        force_rag: bool = False,
     ) -> dict:
+
+        message = (
+            message or ""
+        ).strip()
+
+        selected_document = (
+            selected_document or ""
+        ).strip()
+
+        # =================================================
+        # DOCUMENT MODE
+        # =================================================
+
+        if selected_document:
+            document_context = True
+            force_rag = True
+
+        # =================================================
+        # PAYLOAD
+        # =================================================
+
+        payload = {
+            "message": message,
+
+            "selected_document": (
+                selected_document
+            ),
+
+            "document_context": (
+                bool(document_context)
+            ),
+
+            "force_rag": (
+                bool(force_rag)
+            ),
+
+            "ocr_text": (
+                ocr_text or ""
+            ).strip(),
+
+            "history": (
+                history or []
+            ),
+        }
+
+        # =================================================
+        # DEBUG
+        # =================================================
+
+        print(
+            "\n========== API CHAT =========="
+        )
+
+        print(
+            "Message:",
+            message,
+        )
+
+        print(
+            "Selected document:",
+            selected_document or "NONE",
+        )
+
+        print(
+            "Document context:",
+            document_context,
+        )
+
+        print(
+            "Force RAG:",
+            force_rag,
+        )
+
+        print(
+            "History messages:",
+            len(history or []),
+        )
+
+        print(
+            "Payload:",
+            payload,
+        )
+
+        print(
+            "==============================\n"
+        )
+
+        # =================================================
+        # REQUEST
+        # =================================================
 
         response = requests.post(
             f"{self.base_url}/api/chat",
-
-            json={
-                "message": message,
-
-                "selected_document": (
-                    selected_document
-                ),
-
-                "document_context": (
-                    document_context
-                ),
-            },
-
-            timeout=120,
+            json=payload,
+            timeout=180,
         )
 
         response.raise_for_status()
 
         return response.json()
-
 
     # =====================================================
     # UPLOAD DOCUMENT
@@ -62,22 +141,20 @@ class APIClient:
 
     def upload_document(
         self,
-        file
+        file,
     ) -> dict:
 
         files = {
             "file": (
                 file.name,
                 file.getvalue(),
-                "application/pdf",
+                file.type or "application/pdf",
             )
         }
 
         response = requests.post(
             f"{self.base_url}/api/documents/upload",
-
             files=files,
-
             timeout=300,
         )
 
@@ -85,18 +162,16 @@ class APIClient:
 
         return response.json()
 
-
     # =====================================================
     # GET DOCUMENTS
     # =====================================================
 
     def get_documents(
-        self
+        self,
     ) -> list:
 
         response = requests.get(
             f"{self.base_url}/api/documents/",
-
             timeout=30,
         )
 
@@ -106,9 +181,8 @@ class APIClient:
 
         return data.get(
             "documents",
-            []
+            [],
         )
-
 
     # =====================================================
     # PDF URL
@@ -116,7 +190,7 @@ class APIClient:
 
     def get_document_url(
         self,
-        filename: str
+        filename: str,
     ) -> str:
 
         return (
@@ -125,14 +199,13 @@ class APIClient:
             f"{filename}"
         )
 
-
     # =====================================================
     # OCR IMAGE
     # =====================================================
 
     def ocr_image(
         self,
-        file
+        file,
     ) -> dict:
 
         files = {
@@ -145,16 +218,13 @@ class APIClient:
 
         response = requests.post(
             f"{self.base_url}/api/multimodal/ocr",
-
             files=files,
-
             timeout=180,
         )
 
         response.raise_for_status()
 
         return response.json()
-
 
     # =====================================================
     # ASK ABOUT IMAGE
@@ -169,15 +239,11 @@ class APIClient:
 
         response = requests.post(
             f"{self.base_url}/api/multimodal/ask-image",
-
             json={
                 "question": question,
-
                 "image_text": image_text,
-
                 "image_filename": image_filename,
             },
-
             timeout=180,
         )
 
@@ -185,14 +251,13 @@ class APIClient:
 
         return response.json()
 
-
     # =====================================================
-    # VOICE — TRANSCRIBE AUDIO
+    # VOICE — TRANSCRIBE
     # =====================================================
 
     def transcribe_audio(
         self,
-        file
+        file,
     ) -> dict:
 
         files = {
@@ -205,9 +270,7 @@ class APIClient:
 
         response = requests.post(
             f"{self.base_url}/api/voice/transcribe",
-
             files=files,
-
             timeout=180,
         )
 
@@ -215,23 +278,20 @@ class APIClient:
 
         return response.json()
 
-
     # =====================================================
     # VOICE — TEXT TO SPEECH
     # =====================================================
 
     def text_to_speech(
         self,
-        text: str
+        text: str,
     ):
 
         response = requests.post(
             f"{self.base_url}/api/voice/speak",
-
             json={
-                "text": text
+                "text": text,
             },
-
             timeout=180,
         )
 

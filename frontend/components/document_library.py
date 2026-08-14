@@ -9,17 +9,12 @@ from frontend.utils.api_client import api_client
 
 def render_document_library():
 
+    st.markdown("#### 📤 Add Document")
+    st.caption("Upload a PDF to your knowledge base.")
+
     # =====================================================
     # UPLOAD
     # =====================================================
-
-    st.markdown(
-        "#### 📤 Add Document"
-    )
-
-    st.caption(
-        "Upload a PDF to your knowledge base."
-    )
 
     uploaded_file = st.file_uploader(
         "Choose PDF",
@@ -50,15 +45,33 @@ def render_document_library():
                         uploaded_file
                     )
 
-                st.success(
-                    "PDF uploaded and indexed."
+                display_name = (
+                    result.get(
+                        "display_name",
+                        uploaded_file.name,
+                    )
+                    or uploaded_file.name
                 )
 
-                # Clear uploader state
-                if "knowledge_pdf_uploader" in st.session_state:
-                    del st.session_state[
-                        "knowledge_pdf_uploader"
-                    ]
+                # -----------------------------------------
+                # ONLY STORE THE ACTUALLY UPLOADED DOCUMENT
+                # -----------------------------------------
+
+                st.session_state.selected_document = (
+                    display_name
+                )
+
+                st.session_state.document_context = True
+
+                st.success(
+                    f"Uploaded: {display_name}"
+                )
+
+                # Clear uploader
+                st.session_state.pop(
+                    "knowledge_pdf_uploader",
+                    None,
+                )
 
                 st.rerun()
 
@@ -68,38 +81,29 @@ def render_document_library():
                     f"Upload failed: {error}"
                 )
 
-
     st.divider()
-
 
     # =====================================================
     # KNOWLEDGE BASE
     # =====================================================
 
-    st.markdown(
-        "#### 📚 Knowledge Base"
-    )
-
-    st.caption(
-        "Your indexed documents"
-    )
-
+    st.markdown("#### 📚 Knowledge Base")
+    st.caption("Your uploaded documents")
 
     # =====================================================
     # REFRESH
     # =====================================================
 
     if st.button(
-        "↻ Refresh",
+        "🔄 Refresh",
         use_container_width=True,
         key="refresh_documents",
     ):
 
         st.rerun()
 
-
     # =====================================================
-    # LOAD DOCUMENTS
+    # GET DOCUMENTS FROM BACKEND
     # =====================================================
 
     try:
@@ -114,40 +118,46 @@ def render_document_library():
 
         return
 
-
     # =====================================================
-    # EMPTY
+    # NORMALIZE BACKEND RESPONSE
     # =====================================================
 
-    if not documents:
+    if not isinstance(
+        documents,
+        list,
+    ):
 
-        st.info(
-            "📭 No documents uploaded yet."
-        )
-
-        return
-
-
-    # =====================================================
-    # NORMALIZE
-    # =====================================================
+        documents = []
 
     normalized = []
 
     for document in documents:
 
-        filename = document.get(
-            "filename",
-            "",
-        )
+        if not isinstance(
+            document,
+            dict,
+        ):
+            continue
 
-        display_name = document.get(
-            "display_name",
-            "",
-        )
+        filename = (
+            document.get(
+                "filename",
+                "",
+            )
+            or ""
+        ).strip()
 
-        if not display_name:
-            display_name = filename
+        display_name = (
+            document.get(
+                "display_name",
+                "",
+            )
+            or filename
+        ).strip()
+
+        # Ignore invalid records
+        if not filename or not display_name:
+            continue
 
         normalized.append(
             {
@@ -160,46 +170,93 @@ def render_document_library():
             }
         )
 
+    # =====================================================
+    # NOTHING UPLOADED
+    # =====================================================
+
+    if not normalized:
+
+        # Remove stale document selection
+        st.session_state.pop(
+            "selected_document",
+            None,
+        )
+
+        st.session_state.document_context = False
+
+        st.info(
+            "📭 No documents uploaded yet."
+        )
+
+        return
+
+    # =====================================================
+    # DOCUMENT NAMES
+    # =====================================================
+
+    names = [
+        document["display_name"]
+        for document in normalized
+    ]
+
+    # =====================================================
+    # CURRENT DOCUMENT
+    # =====================================================
+
+    current = (
+        st.session_state.get(
+            "selected_document",
+            "",
+        )
+        or ""
+    ).strip()
+
+    # If current document no longer exists,
+    # automatically select the first backend document.
+
+    if current not in names:
+
+        current = names[0]
+
+        st.session_state.selected_document = (
+            current
+        )
 
     # =====================================================
     # SELECT DOCUMENT
     # =====================================================
 
-    names = [
-        doc["display_name"]
-        for doc in normalized
-    ]
-
-    current = st.session_state.get(
-        "selected_document",
-        "",
-    )
-
-    default_index = 0
-
-    if current in names:
-
-        default_index = names.index(
-            current
-        )
-
     selected_name = st.selectbox(
         "Select document",
         names,
-        index=default_index,
+        index=names.index(current),
         key="document_selector",
     )
 
+    # =====================================================
+    # SYNC SELECTION
+    # =====================================================
+
+    if selected_name != st.session_state.get(
+        "selected_document",
+        "",
+    ):
+
+        st.session_state.selected_document = (
+            selected_name
+        )
+
+        st.session_state.document_context = True
 
     # =====================================================
-    # FIND DOCUMENT
+    # FIND SELECTED DOCUMENT
     # =====================================================
 
     selected = next(
         (
-            doc
-            for doc in normalized
-            if doc["display_name"] == selected_name
+            document
+            for document in normalized
+            if document["display_name"] == selected_name
         ),
         None,
     )
@@ -207,38 +264,17 @@ def render_document_library():
     if selected is None:
         return
 
-
-    # =====================================================
-    # DOCUMENT CHANGE
-    # =====================================================
-
-    if (
-        st.session_state.get("selected_document")
-        != selected["display_name"]
-    ):
-
-        st.session_state.selected_document = (
-            selected["display_name"]
-        )
-
-        # Selecting a document makes it available
-        # as document context, but classifier still
-        # decides whether a question is RAG.
-        st.session_state.document_context = True
-
-
     # =====================================================
     # ACTIVE DOCUMENT
     # =====================================================
 
     st.success(
-        f"📄 Active: {selected['display_name']}"
+        f"📄 Uploaded PDF: {selected['display_name']}"
     )
 
     st.caption(
         f"{selected['size_kb']} KB • PDF"
     )
-
 
     # =====================================================
     # OPEN PDF

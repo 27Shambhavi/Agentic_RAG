@@ -1,50 +1,75 @@
+import os
+
+from dotenv import load_dotenv
 from mistralai.client import Mistral
 
-from app.config.settings import settings
 
-from app.llm.base import BaseLLM
+# =========================================================
+# LOAD ENV
+# =========================================================
+
+load_dotenv()
 
 
 # =========================================================
-# MISTRAL LLM
+# CONFIG
 # =========================================================
 
-class MistralLLM(BaseLLM):
+MISTRAL_API_KEY = os.getenv(
+    "MISTRAL_API_KEY"
+)
 
-    def __init__(self):
-
-        if not settings.MISTRAL_API_KEY:
-
-            raise ValueError(
-                "MISTRAL_API_KEY not found in .env"
-            )
-
-        self.client = Mistral(
-            api_key=settings.MISTRAL_API_KEY
-        )
-
-        self.model = getattr(
-            settings,
-            "MISTRAL_MODEL",
-            "mistral-small-latest"
-        )
+MISTRAL_MODEL = os.getenv(
+    "MISTRAL_MODEL",
+    "mistral-small-latest",
+)
 
 
-    # =====================================================
-    # GENERATE
-    # =====================================================
+# =========================================================
+# VALIDATE KEY
+# =========================================================
+
+if not MISTRAL_API_KEY:
+
+    raise ValueError(
+        "MISTRAL_API_KEY not found in .env"
+    )
+
+
+# =========================================================
+# CLIENT
+# =========================================================
+
+client = Mistral(
+    api_key=MISTRAL_API_KEY
+)
+
+
+# =========================================================
+# LLM WRAPPER
+# =========================================================
+
+class MistralLLM:
+
+    def __init__(
+        self,
+        model: str = MISTRAL_MODEL,
+    ):
+
+        self.model = model
+
 
     def generate(
         self,
-        prompt: str
+        prompt: str,
     ) -> str:
 
-        if not prompt.strip():
+        if not prompt or not prompt.strip():
 
             return ""
 
 
-        response = self.client.chat.complete(
+        response = client.chat.complete(
 
             model=self.model,
 
@@ -57,22 +82,13 @@ class MistralLLM(BaseLLM):
         )
 
 
-        content = (
+        return (
             response
             .choices[0]
             .message
             .content
+            .strip()
         )
-
-
-        if not content:
-
-            return (
-                "I couldn't generate a response."
-            )
-
-
-        return content.strip()
 
 
 # =========================================================

@@ -1,86 +1,196 @@
 import streamlit as st
 
 
+# =========================================================
+# SOURCES RENDERER
+# =========================================================
+
 def render_sources(
-    sources: list
+    sources: list,
 ):
+    """
+    Render web and document sources.
+
+    Supported source formats:
+
+    WEB:
+    {
+        "title": "...",
+        "url": "...",
+        "snippet": "..."
+    }
+
+    RAG:
+    {
+        "source": "...",
+        "page": 1,
+        "score": 0.82,
+        "text": "..."
+    }
+    """
 
     if not sources:
         return
 
+    # -----------------------------------------------------
+    # SOURCE CONTAINER
+    # -----------------------------------------------------
+
     with st.expander(
-        f"📚 Sources ({len(sources)})"
+        f"📚 Sources ({len(sources)})",
+        expanded=False,
     ):
 
         for index, source in enumerate(
             sources,
-            start=1
+            start=1,
         ):
 
-            # -------------------------------------------------
+            if not isinstance(
+                source,
+                dict,
+            ):
+                continue
+
+            # =================================================
             # WEB SOURCE
-            # -------------------------------------------------
+            # =================================================
 
-            if source.get("url"):
-
-                title = source.get(
-                    "title",
-                    f"Source {index}"
-                )
-
-                url = source.get(
+            url = (
+                source.get(
                     "url",
-                    ""
+                    "",
                 )
+                or ""
+            ).strip()
 
-                snippet = source.get(
-                    "snippet",
-                    ""
-                )
+            if url:
+
+                title = (
+                    source.get(
+                        "title",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                if not title:
+                    title = f"Web Source {index}"
+
+                snippet = (
+                    source.get(
+                        "snippet",
+                        "",
+                    )
+                    or ""
+                ).strip()
+
+                # -------------------------------------------------
+                # TITLE + LINK
+                # -------------------------------------------------
 
                 st.markdown(
                     f"**{index}. [{title}]({url})**"
                 )
 
+                # -------------------------------------------------
+                # URL
+                # -------------------------------------------------
+
+                st.caption(
+                    url
+                )
+
+                # -------------------------------------------------
+                # SNIPPET
+                # -------------------------------------------------
+
                 if snippet:
 
-                    st.caption(
+                    st.write(
                         snippet
                     )
 
-            # -------------------------------------------------
-            # RAG SOURCE
-            # -------------------------------------------------
+                st.divider()
 
-            else:
+                continue
 
-                source_name = source.get(
+            # =================================================
+            # DOCUMENT / RAG SOURCE
+            # =================================================
+
+            source_name = (
+                source.get(
                     "source",
-                    "Unknown document"
+                    "",
                 )
+                or "Unknown document"
+            )
 
-                page = source.get(
-                    "page",
-                    "?"
-                )
+            page = source.get(
+                "page",
+                "?",
+            )
 
-                score = source.get(
-                    "score"
-                )
+            score = source.get(
+                "score",
+                None,
+            )
 
-                if score is not None:
+            # -------------------------------------------------
+            # DOCUMENT HEADER
+            # -------------------------------------------------
 
-                    st.markdown(
-                        f"**{index}. 📄 "
-                        f"{source_name}**  \n"
-                        f"Page: {page} • "
-                        f"Score: {score:.4f}"
+            st.markdown(
+                f"**{index}. 📄 {source_name}**"
+            )
+
+            # -------------------------------------------------
+            # METADATA
+            # -------------------------------------------------
+
+            metadata = (
+                f"Page: {page}"
+            )
+
+            if score is not None:
+
+                try:
+
+                    metadata += (
+                        f" • Relevance: "
+                        f"{float(score):.4f}"
                     )
 
-                else:
+                except (
+                    TypeError,
+                    ValueError,
+                ):
 
-                    st.markdown(
-                        f"**{index}. 📄 "
-                        f"{source_name}**  \n"
-                        f"Page: {page}"
+                    pass
+
+            st.caption(
+                metadata
+            )
+
+            # -------------------------------------------------
+            # CHUNK TEXT
+            # -------------------------------------------------
+
+            text = (
+                source.get(
+                    "text",
+                    "",
+                )
+                or ""
+            ).strip()
+
+            if text:
+
+                with st.container():
+
+                    st.write(
+                        text
                     )
+
+            st.divider()

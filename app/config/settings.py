@@ -73,6 +73,21 @@ class Settings:
         ""
     )
 
+    PINECONE_CLOUD: str = os.getenv(
+        "PINECONE_CLOUD",
+        "aws"
+    )
+
+    PINECONE_REGION: str = os.getenv(
+        "PINECONE_REGION",
+        "us-east-1"
+    )
+
+    EMBEDDING_DIMENSION: int = int(os.getenv(
+        "EMBEDDING_DIMENSION",
+        "384"
+    ))
+
 
     # =====================================================
     # EMBEDDINGS

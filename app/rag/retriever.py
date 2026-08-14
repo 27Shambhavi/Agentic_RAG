@@ -2,9 +2,13 @@ from app.rag.embeddings import embedding_model
 from app.rag.pinecone_client import pinecone_client
 
 
-# =========================================================
-# RETRIEVE DOCUMENTS
-# =========================================================
+def normalize_filename(name: str) -> str:
+    return (
+        str(name or "")
+        .strip()
+        .lower()
+    )
+
 
 def retrieve(
     query: str,
@@ -12,152 +16,256 @@ def retrieve(
     selected_document: str = "",
 ) -> list[dict]:
 
-    query = (query or "").strip()
+    query = (
+        query or ""
+    ).strip()
+
     selected_document = (
         selected_document or ""
     ).strip()
 
-
-    # =====================================================
-    # VALIDATION
-    # =====================================================
-
     if not query:
         return []
 
+    print(
+        "\n================ RETRIEVER ================"
+    )
+
+    print(
+        "Query:",
+        query,
+    )
+
+    print(
+        "Selected document:",
+        selected_document or "NONE",
+    )
 
     # =====================================================
     # EMBEDDING
     # =====================================================
 
-    query_vector = embedding_model.embed_text(
-        query
+    try:
+
+        query_vector = embedding_model.embed_text(
+            query
+        )
+
+    except Exception as error:
+
+        print(
+            "[RETRIEVER EMBEDDING ERROR]",
+            repr(error),
+        )
+
+        return []
+
+    print(
+        "Query vector dimension:",
+        len(query_vector),
     )
 
-
     # =====================================================
-    # PINECONE FILTER
-    # =====================================================
+    # PINECONE QUERY
     #
-    # If a document is active, ONLY retrieve chunks
-    # belonging to that document.
-    #
-    # metadata:
-    #
-    # {
-    #     "text": "...",
-    #     "source": "Ayushman Bharat Yojna.pdf",
-    #     "page": 4
-    # }
-    #
+    # IMPORTANT:
+    # Query the index directly because this is the
+    # confirmed working Pinecone path.
     # =====================================================
 
-    query_kwargs = {
-        "vector": query_vector,
-        "top_k": top_k,
-    }
-
-
-    if selected_document:
-
-        query_kwargs["filter"] = {
-            "source": {
-                "$eq": selected_document
-            }
-        }
-
-
-    # =====================================================
-    # PINECONE SEARCH
-    # =====================================================
-
-    result = pinecone_client.query(
-        **query_kwargs
+    candidate_k = max(
+        top_k * 10,
+        50,
     )
 
+    try:
+
+        result = pinecone_client.index.query(
+            vector=query_vector,
+            top_k=candidate_k,
+            namespace="default",
+            include_metadata=True,
+        )
+
+    except Exception as error:
+
+        print(
+            "[PINECONE QUERY ERROR]",
+            repr(error),
+        )
+
+        return []
 
     matches = (
         result.get(
             "matches",
-            []
+            [],
         )
-        if isinstance(result, dict)
-        else []
+        or []
     )
 
+    print(
+        "Pinecone candidates:",
+        len(matches),
+    )
 
     # =====================================================
-    # BUILD DOCUMENT RESULTS
+    # NORMALIZE SELECTED DOCUMENT
+    # =====================================================
+
+    selected_normalized = normalize_filename(
+        selected_document
+    )
+
+    print(
+        "Normalized selected document:",
+        repr(selected_normalized),
+    )
+
+    # =====================================================
+    # FILTER DOCUMENT
     # =====================================================
 
     documents = []
 
-
     for match in matches:
 
-        metadata = match.get(
-            "metadata",
-            {}
-        ) or {}
-
-
-        text = str(
-            metadata.get(
-                "text",
-                ""
+        metadata = (
+            match.get(
+                "metadata",
+                {},
             )
-        ).strip()
-
+            or {}
+        )
 
         source = str(
             metadata.get(
                 "source",
-                ""
+                "",
             )
         ).strip()
 
-
-        page = metadata.get(
-            "page",
-            ""
-        )
-
-
-        score = match.get(
-            "score",
-            0
-        )
-
-
-        # -------------------------------------------------
-        # Ignore empty chunks
-        # -------------------------------------------------
+        text = str(
+            metadata.get(
+                "text",
+                "",
+            )
+        ).strip()
 
         if not text:
             continue
 
+        source_normalized = normalize_filename(
+            source
+        )
 
         # -------------------------------------------------
-        # Extra safety
-        #
-        # Even though Pinecone filter is applied,
-        # verify source again.
+        # SELECTED DOCUMENT FILTER
         # -------------------------------------------------
 
-        if selected_document:
+        if selected_normalized:
 
-            if source != selected_document:
+            if source_normalized != selected_normalized:
+
                 continue
 
+        # -------------------------------------------------
+        # ADD DOCUMENT
+        # -------------------------------------------------
+
+        try:
+
+            score = float(
+                match.get(
+                    "score",
+                    0.0,
+                )
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+
+            score = 0.0
 
         documents.append(
             {
+                "id": match.get(
+                    "id",
+                    "",
+                ),
+
                 "text": text,
-                "source": source,
-                "page": page,
+
+                "source": (
+                    source
+                    or selected_document
+                ),
+
+                "page": metadata.get(
+                    "page",
+                    "",
+                ),
+
                 "score": score,
             }
         )
 
+    # =====================================================
+    # SORT BY RELEVANCE
+    # =====================================================
+
+    documents.sort(
+        key=lambda item: item.get(
+            "score",
+            0.0,
+        ),
+        reverse=True,
+    )
+
+    # =====================================================
+    # TOP K
+    # =====================================================
+
+    documents = documents[:top_k]
+
+    # =====================================================
+    # DEBUG
+    # =====================================================
+
+    print(
+        "\n------------- RAG MATCHES -------------"
+    )
+
+    print(
+        "Selected document:",
+        selected_document,
+    )
+
+    print(
+        "Selected document matches:",
+        len(documents),
+    )
+
+    for index, document in enumerate(
+        documents,
+        start=1,
+    ):
+
+        print(
+            f"[{index}] "
+            f"SCORE={document['score']:.4f} "
+            f"SOURCE={repr(document['source'])} "
+            f"PAGE={document['page']}"
+        )
+
+    print(
+        "----------------------------------------"
+    )
+
+    print(
+        "===========================================\n"
+    )
 
     return documents

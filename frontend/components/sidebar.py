@@ -60,6 +60,16 @@ def render_sidebar():
                 "conversation"
             )
 
+            # Clear OCR context
+            if "ocr_result" in st.session_state:
+                del st.session_state["ocr_result"]
+            if "ocr_text" in st.session_state:
+                del st.session_state["ocr_text"]
+            if "image_question" in st.session_state:
+                del st.session_state["image_question"]
+            if "ocr_image" in st.session_state:
+                del st.session_state["ocr_image"]
+
             st.rerun()
 
 

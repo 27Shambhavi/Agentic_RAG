@@ -100,6 +100,10 @@ def render_image_upload():
                     "ocr_result"
                 ] = result
 
+                st.session_state[
+                    "ocr_text"
+                ] = result.get("text", "")
+
                 st.success(
                     "✓ Text extracted"
                 )
@@ -186,68 +190,13 @@ def render_image_upload():
 
             return
 
-        with st.spinner(
-            "Agent is thinking..."
-        ):
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": question,
+            }
+        )
 
-            try:
+        st.session_state.active_tool = "conversation"
 
-                result = api_client.ask_image(
-                    question=question,
-                    image_text=extracted_text,
-                    image_filename=uploaded_image.name,
-                )
-
-                st.markdown(
-                    """
-                    <div style="
-                        font-size: 12px;
-                        font-weight: 700;
-                        color: #cbd5e1;
-                        margin-top: 10px;
-                    ">
-                        🤖 Answer
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-                st.markdown(
-                    result.get(
-                        "answer",
-                        "No answer generated."
-                    )
-                )
-
-                route = result.get(
-                    "route",
-                    "general"
-                )
-
-                st.caption(
-                    f"Route · {route.upper()}"
-                )
-
-            except Exception as error:
-
-                error_text = str(error)
-
-                if (
-                    "429" in error_text
-                    or "quota" in error_text.lower()
-                    or "RESOURCE_EXHAUSTED"
-                    in error_text
-                ):
-
-                    st.warning(
-                        "⚠️ Gemini free-tier quota "
-                        "is currently exhausted. "
-                        "Please wait for the quota "
-                        "to reset."
-                    )
-
-                else:
-
-                    st.error(
-                        f"Agent failed: {error}"
-                    )
+        st.rerun()

@@ -1,7 +1,6 @@
 from pathlib import Path
 import shutil
 import uuid
-import re
 
 from fastapi import (
     APIRouter,
@@ -15,91 +14,64 @@ from fastapi.responses import FileResponse
 from app.rag.indexer import index_pdf
 
 
+# =========================================================
+# ROUTER
+# =========================================================
+
 router = APIRouter(
     prefix="/api/documents",
     tags=["Documents"],
 )
 
 
-UPLOAD_DIR = Path("data/documents")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# =========================================================
+# UPLOAD DIRECTORY
+# =========================================================
+
+UPLOAD_DIR = Path(
+    "data/documents"
+)
+
+UPLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 
 # =========================================================
-# CREATE SAFE STORAGE NAME
+# CREATE STORAGE NAME
 # =========================================================
 
-def create_storage_name(original_filename: str) -> str:
+def create_storage_name(
+    original_filename: str,
+) -> str:
 
-    original_path = Path(original_filename)
-
-    stem = original_path.stem
-    extension = original_path.suffix.lower()
-
-    # Remove unsafe characters
-    safe_stem = re.sub(
-        r"[^a-zA-Z0-9_\- ]",
-        "",
-        stem
-    ).strip()
-
-    if not safe_stem:
-        safe_stem = "document"
-
-    # UUID is only for internal uniqueness
-    unique_id = uuid.uuid4().hex
-
-    return f"{unique_id}_{safe_stem}{extension}"
-
-
-# =========================================================
-# GET DISPLAY NAME
-# =========================================================
-
-def get_display_name(filename: str) -> str:
-
-    path = Path(filename)
+    path = Path(
+        original_filename
+    )
 
     stem = path.stem
-    extension = path.suffix
+    extension = path.suffix.lower()
 
-    # New format:
-    # UUID_original_name.pdf
-    if "_" in stem:
+    unique_id = uuid.uuid4().hex
 
-        first_part, remaining = stem.split(
-            "_",
-            1
-        )
-
-        # Check whether first part is UUID
-        if re.fullmatch(
-            r"[a-fA-F0-9]{32}",
-            first_part
-        ):
-
-            return f"{remaining}{extension}"
-
-    # Old UUID-only files
-    if re.fullmatch(
-        r"[a-fA-F0-9]{32}",
-        stem
-    ):
-
-        return "Uploaded Document.pdf"
-
-    # Normal filename
-    return filename
+    return (
+        f"{unique_id}_{stem}{extension}"
+    )
 
 
 # =========================================================
-# UPLOAD
+# UPLOAD DOCUMENT
 # =========================================================
 
 @router.post("/upload")
 async def upload_document(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
+
+    # =====================================================
+    # VALIDATE FILENAME
+    # =====================================================
 
     if not file.filename:
 
@@ -108,54 +80,194 @@ async def upload_document(
             detail="Filename is missing.",
         )
 
-    extension = Path(
-        file.filename
-    ).suffix.lower()
+    # -----------------------------------------------------
+    # Keep only the actual filename
+    # -----------------------------------------------------
 
-    if extension != ".pdf":
+    original_filename = Path(
+        file.filename
+    ).name
+
+    # =====================================================
+    # VALIDATE PDF
+    # =====================================================
+
+    if (
+        Path(original_filename)
+        .suffix
+        .lower()
+        != ".pdf"
+    ):
 
         raise HTTPException(
             status_code=400,
             detail="Only PDF files are supported.",
         )
 
+    # =====================================================
+    # CREATE UNIQUE STORAGE NAME
+    # =====================================================
+
     storage_name = create_storage_name(
-        file.filename
+        original_filename
     )
 
     file_path = (
         UPLOAD_DIR / storage_name
     )
 
+    # =====================================================
+    # DEBUG
+    # =====================================================
+
+    print(
+        "\n================ DOCUMENT UPLOAD ================"
+    )
+
+    print(
+        "Original filename:",
+        original_filename,
+    )
+
+    print(
+        "Storage filename:",
+        storage_name,
+    )
+
+    print(
+        "Physical path:",
+        file_path,
+    )
+
+    # =====================================================
+    # SAVE + INDEX
+    # =====================================================
+
     try:
+
+        # -------------------------------------------------
+        # SAVE FILE
+        # -------------------------------------------------
 
         with open(
             file_path,
-            "wb"
+            "wb",
         ) as buffer:
 
             shutil.copyfileobj(
                 file.file,
-                buffer
+                buffer,
             )
 
-        result = index_pdf(
-            str(file_path)
+        print(
+            "Saved file:",
+            file_path,
         )
+
+        # -------------------------------------------------
+        # INDEX PDF
+        #
+        # VERY IMPORTANT:
+        #
+        # physical filename:
+        # UUID_original.pdf
+        #
+        # Pinecone source:
+        # original.pdf
+        #
+        # This keeps selected_document matching
+        # Pinecone metadata.
+        # -------------------------------------------------
+
+        result = index_pdf(
+            file_path=str(
+                file_path
+            ),
+            document_name=original_filename,
+        )
+
+        print(
+            "Indexed document:",
+            original_filename,
+        )
+
+        print(
+            "Pages:",
+            result.get(
+                "pages",
+                0,
+            ),
+        )
+
+        print(
+            "Chunks:",
+            result.get(
+                "chunks",
+                0,
+            ),
+        )
+
+        print(
+            "=================================================\n"
+        )
+
+        # =================================================
+        # RESPONSE
+        # =================================================
 
         return {
             "status": "success",
-            "filename": file.filename,
+
+            # Name shown to frontend
+            "filename": original_filename,
+
+            # Actual physical filename
             "stored_as": storage_name,
-            "display_name": file.filename,
-            "pages": result["pages"],
-            "chunks": result["chunks"],
+
+            # Pinecone metadata source
+            "display_name": original_filename,
+
+            "pages": result.get(
+                "pages",
+                0,
+            ),
+
+            "chunks": result.get(
+                "chunks",
+                0,
+            ),
         }
 
     except Exception as error:
 
+        print(
+            "\n================ DOCUMENT UPLOAD ERROR ================"
+        )
+
+        print(
+            repr(error)
+        )
+
+        print(
+            "========================================================\n"
+        )
+
+        # -------------------------------------------------
+        # Delete partially saved file
+        # -------------------------------------------------
+
         if file_path.exists():
-            file_path.unlink()
+
+            try:
+
+                file_path.unlink()
+
+            except Exception as cleanup_error:
+
+                print(
+                    "Cleanup error:",
+                    repr(cleanup_error),
+                )
 
         raise HTTPException(
             status_code=500,
@@ -172,46 +284,102 @@ def list_documents():
 
     documents = []
 
+    # -----------------------------------------------------
+    # Read physical PDFs
+    # -----------------------------------------------------
+
     for file in sorted(
         UPLOAD_DIR.glob("*.pdf")
     ):
 
+        filename = file.name
+
+        display_name = filename
+
+        # =================================================
+        # REMOVE UUID PREFIX
+        #
+        # Example:
+        #
+        # 56d39032d0cf4226a28727aaff9a9c8d_file.pdf
+        #
+        # becomes:
+        #
+        # file.pdf
+        # =================================================
+
+        if "_" in filename:
+
+            prefix, remaining = (
+                filename.split(
+                    "_",
+                    1,
+                )
+            )
+
+            if (
+                len(prefix) == 32
+                and all(
+                    character
+                    in "0123456789abcdefABCDEF"
+                    for character in prefix
+                )
+            ):
+
+                display_name = remaining
+
+        # =================================================
+        # DOCUMENT INFO
+        # =================================================
+
         documents.append(
             {
-                "filename": file.name,
+                # Physical filename
+                "filename": filename,
 
-                "display_name": get_display_name(
-                    file.name
-                ),
+                # User-facing filename
+                "display_name": display_name,
 
+                # File size
                 "size_kb": round(
                     file.stat().st_size / 1024,
-                    2
+                    2,
                 ),
             }
         )
 
     return {
-        "documents": documents
+        "documents": documents,
     }
 
 
 # =========================================================
-# OPEN PDF
+# VIEW PDF
 # =========================================================
 
-@router.get("/view/{filename}")
+@router.get(
+    "/view/{filename}"
+)
 def view_document(
-    filename: str
+    filename: str,
 ):
+
+    # -----------------------------------------------------
+    # Prevent path traversal
+    # -----------------------------------------------------
 
     safe_filename = Path(
         filename
     ).name
 
     file_path = (
-        UPLOAD_DIR / safe_filename
+        UPLOAD_DIR /
+        safe_filename
     )
+
+    # =====================================================
+    # CHECK FILE
+    # =====================================================
 
     if not file_path.exists():
 
@@ -220,10 +388,14 @@ def view_document(
             detail="Document not found.",
         )
 
+    # =====================================================
+    # RETURN PDF
+    # =====================================================
+
     return FileResponse(
         path=file_path,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": "inline"
+            "Content-Disposition": "inline",
         },
     )
