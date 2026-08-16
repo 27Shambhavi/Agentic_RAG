@@ -12,6 +12,23 @@ venv/
 .venv/
 env/
 
+# Generated audio
+data/audio/
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.ogg
+
+# Vector databases / generated indexes
+chroma_db/
+data/vectorstore/
+*.sqlite
+*.db
+
+# Logs
+*.log
+
 # IDE
 .vscode/
 .idea/
@@ -20,24 +37,28 @@ env/
 .DS_Store
 Thumbs.db
 
+# Cache
+.cache/
+.pytest_cache/
+# Generated voice/audio files
+data/audio/
+*.wav
+*.mp3
+*.m4a
+*.webm
+*.ogg
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment variables
+.env
+.env.*
+
 # Logs
 *.log
-
-# Local databases / vector stores
-chroma/
-chroma_db/
-*.db
-
-# Temporary files
-tmp/
-temp/
-
-# Uploaded documents
-uploads/
-data/uploads/
-data/documents/
-data/images/
-
-# Secrets
-*.pem
-*.key

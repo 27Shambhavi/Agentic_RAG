@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -8,10 +10,44 @@ import streamlit as st
 # PROJECT ROOT
 # =========================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = (
+    Path(__file__)
+    .resolve()
+    .parent.parent
+)
 
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+    sys.path.insert(
+        0,
+        str(PROJECT_ROOT),
+    )
+
+
+# =========================================================
+# FRONTEND IMPORTS
+# =========================================================
+
+from frontend.components.sidebar import render_sidebar
+from frontend.components.chat import render_chat
+from frontend.components.document_upload import render_document_upload
+from frontend.components.document_library import render_document_library
+from frontend.components.image_upload import render_image_upload
+
+
+# =========================================================
+# OPTIONAL VOICE COMPONENT
+# =========================================================
+
+try:
+
+    from frontend.components.voice_input import render_voice_input
+
+    VOICE_COMPONENT_AVAILABLE = True
+
+except ImportError:
+
+    VOICE_COMPONENT_AVAILABLE = False
+    render_voice_input = None
 
 
 # =========================================================
@@ -27,47 +63,49 @@ st.set_page_config(
 
 
 # =========================================================
-# IMPORT COMPONENTS
-# =========================================================
-
-from frontend.components.sidebar import render_sidebar
-from frontend.components.chat import render_chat
-from frontend.components.document_library import (
-    render_document_library,
-)
-from frontend.components.voice_input import (
-    render_voice_input,
-)
-from frontend.components.image_upload import (
-    render_image_upload,
-)
-
-
-# =========================================================
 # LOAD CSS
 # =========================================================
 
-def load_css():
+def load_css() -> None:
 
-    css_paths = [
-        PROJECT_ROOT / "frontend" / "styles" / "main.css",
+    candidates = [
         PROJECT_ROOT / "frontend" / "style.css",
+        PROJECT_ROOT / "frontend" / "styles.css",
+        PROJECT_ROOT / "frontend" / "components" / "style.css",
     ]
 
-    for css_path in css_paths:
+    for css_file in candidates:
 
-        if css_path.exists():
+        if css_file.exists():
 
-            css = css_path.read_text(
-                encoding="utf-8"
-            )
+            try:
 
-            st.markdown(
-                f"<style>{css}</style>",
-                unsafe_allow_html=True,
-            )
+                css = css_file.read_text(
+                    encoding="utf-8"
+                )
 
-            break
+                st.markdown(
+                    f"<style>{css}</style>",
+                    unsafe_allow_html=True,
+                )
+
+                print(
+                    "[FRONTEND] CSS loaded:",
+                    css_file,
+                )
+
+                return
+
+            except Exception as error:
+
+                print(
+                    "[FRONTEND CSS ERROR]",
+                    repr(error),
+                )
+
+    print(
+        "[FRONTEND] No frontend CSS file found."
+    )
 
 
 load_css()
@@ -77,203 +115,389 @@ load_css()
 # SESSION STATE
 # =========================================================
 
-defaults = {
-    "active_tool": "conversation",
+DEFAULT_STATE = {
+    "active_feature": "Chat",
     "messages": [],
     "selected_document": "",
     "document_context": False,
+    "ocr_text": "",
+    "web_url": "",
+    "web_context": False,
+    "voice_audio": None,
+    "voice_transcript": "",
+    "processed_voice_hash": "",
 }
 
-for key, value in defaults.items():
+for key, value in DEFAULT_STATE.items():
 
     if key not in st.session_state:
-
         st.session_state[key] = value
 
 
 # =========================================================
-# NEW CONVERSATION
+# TOP HEADER
+#
+# Uses st.html when available so HTML is NEVER displayed
+# as raw Markdown/code.
 # =========================================================
 
-def new_conversation():
+HEADER_HTML = """
+<div class="app-header">
+    <div class="brand">
+        <div class="brand-icon">🤖</div>
+        <div>
+            <div class="brand-title">Agentic RAG Assistant</div>
+            <div class="brand-subtitle">
+                Intelligent document search • Web research • General AI • Vision & OCR • Voice
+            </div>
+        </div>
+    </div>
+    <div class="online-badge">
+        <span class="online-dot"></span>
+        System Online
+    </div>
+</div>
+"""
 
-    # Only clear conversation state.
-    # Do NOT delete uploaded documents.
-    st.session_state.messages = []
-
-    # Disable current document context for this conversation.
-    st.session_state.document_context = False
-
-    # Always return to normal chat.
-    st.session_state.active_tool = "conversation"
-
-    # Clear OCR context
-    if "ocr_result" in st.session_state:
-        del st.session_state["ocr_result"]
-    if "ocr_text" in st.session_state:
-        del st.session_state["ocr_text"]
-    if "image_question" in st.session_state:
-        del st.session_state["image_question"]
-    if "ocr_image" in st.session_state:
-        del st.session_state["ocr_image"]
+if hasattr(st, "html"):
+    st.html(HEADER_HTML)
+else:
+    st.markdown(
+        HEADER_HTML,
+        unsafe_allow_html=True,
+    )
 
 
 # =========================================================
 # SIDEBAR
 # =========================================================
 
-render_sidebar()
+active_feature = render_sidebar()
 
 
 # =========================================================
-# HEADER
+# PAGE HELPERS
 # =========================================================
 
-header_left, header_right = st.columns(
-    [5, 1],
-    vertical_alignment="center",
-)
-
-
-with header_left:
+def page_header(
+    title: str,
+    subtitle: str,
+) -> None:
 
     st.markdown(
-        "## 🤖 Agentic RAG Assistant"
+        f'<div class="page-title">{title}</div>',
+        unsafe_allow_html=True,
     )
 
-    st.caption(
-        "Documents • Web • AI • OCR • Voice"
+    st.markdown(
+        f'<div class="page-subtitle">{subtitle}</div>',
+        unsafe_allow_html=True,
     )
 
 
-with header_right:
+# =========================================================
+# CHAT
+# =========================================================
 
-    if st.button(
-        "＋ New",
-        use_container_width=True,
-        key="top_new_conversation",
+if active_feature == "Chat":
+
+    page_header(
+        "💬 Conversation",
+        "Ask about your documents, webpages, images, or anything else.",
+    )
+
+    with st.container(
+        border=True,
     ):
-
-        new_conversation()
-
-        st.rerun()
-
-
-st.divider()
-
-
-# =========================================================
-# MAIN LAYOUT
-# =========================================================
-
-conversation_col, knowledge_col = st.columns(
-    [3.5, 1.25],
-    gap="large",
-)
-
-
-# =========================================================
-# MAIN CONVERSATION
-# =========================================================
-
-with conversation_col:
-
-    active_tool = st.session_state.get(
-        "active_tool",
-        "conversation",
-    )
-
-
-    # =====================================================
-    # CONVERSATION
-    # =====================================================
-
-    if active_tool == "conversation":
-
-        # IMPORTANT:
-        # Do not create another "Conversation" heading here.
-        # chat.py owns the conversation UI.
 
         render_chat()
 
-        # -------------------------------------------------
-        # COMPACT VOICE INPUT
-        # -------------------------------------------------
 
-        with st.expander(
-            "🎙️ Voice input",
-            expanded=False,
-        ):
+# =========================================================
+# DOCUMENT RAG
+# =========================================================
 
-            render_voice_input()
+elif active_feature == "Document RAG":
 
+    page_header(
+        "📄 Document RAG",
+        "Upload documents and ask questions grounded in your knowledge base.",
+    )
 
-    # =====================================================
-    # OCR
-    # =====================================================
+    left_col, right_col = st.columns(
+        [2.1, 1],
+        gap="large",
+    )
 
-    elif active_tool == "ocr":
+    with left_col:
 
         st.markdown(
-            "### 🖼️ Vision & OCR"
+            '<div class="section-title">＋ Add Knowledge</div>',
+            unsafe_allow_html=True,
         )
 
-        st.caption(
-            "Extract text and ask questions about images."
+        st.markdown(
+            '<div class="section-subtitle">'
+            'Upload PDF, DOCX, or TXT documents.'
+            '</div>',
+            unsafe_allow_html=True,
         )
 
-        render_image_upload()
+        render_document_upload()
+
+    with right_col:
+
+        st.markdown(
+            '<div class="section-title">📚 Knowledge Library</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            '<div class="section-subtitle">'
+            'Your indexed documents.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        render_document_library()
+
+    st.divider()
+
+    st.markdown(
+        '<div class="section-title">💬 Ask your documents</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(
+        border=True,
+    ):
+
+        render_chat()
 
 
-    # =====================================================
-    # VOICE
-    # =====================================================
+# =========================================================
+# WEB SEARCH
+# =========================================================
 
-    elif active_tool == "voice":
+elif active_feature == "Web Search":
 
-        # Backward compatibility only.
-        # Voice should normally be used inside conversation.
+    page_header(
+        "🌐 Web Search",
+        "Ask for current information and use the web-search route.",
+    )
 
-        st.session_state.active_tool = "conversation"
+    st.info(
+        "💡 Try: \"What are the latest AI developments?\""
+    )
 
-        st.rerun()
+    with st.container(
+        border=True,
+    ):
+
+        render_chat()
 
 
-    # =====================================================
-    # FALLBACK
-    # =====================================================
+# =========================================================
+# GENERAL AI
+# =========================================================
+
+elif active_feature == "General AI":
+
+    page_header(
+        "🤖 General AI",
+        "Ask normal questions and have a general conversation with the assistant.",
+    )
+
+    with st.container(
+        border=True,
+    ):
+
+        render_chat()
+
+
+# =========================================================
+# VISION & OCR
+# =========================================================
+
+elif active_feature == "Vision & OCR":
+
+    page_header(
+        "🖼️ Vision & OCR",
+        "Upload an image and extract or understand its content.",
+    )
+
+    render_image_upload()
+
+    if st.session_state.get("ocr_text"):
+
+        st.divider()
+
+        st.markdown(
+            '<div class="section-title">📝 Extracted Text</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.text_area(
+            "OCR Result",
+            value=st.session_state.ocr_text,
+            height=220,
+            disabled=True,
+        )
+
+    st.divider()
+
+    st.markdown(
+        '<div class="section-title">💬 Ask about the image</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(
+        border=True,
+    ):
+
+        render_chat()
+
+
+# =========================================================
+# VOICE ASSISTANT
+# =========================================================
+
+elif active_feature == "Voice Assistant":
+
+    if hasattr(st, "html"):
+
+        st.html(
+            """
+            <div class="voice-card">
+                <div class="voice-title">🎙️ Voice Assistant</div>
+                <div class="voice-subtitle">
+                    Speak your question and let the Agentic RAG Assistant handle it.
+                </div>
+            </div>
+            """
+        )
 
     else:
 
-        st.session_state.active_tool = "conversation"
+        st.markdown(
+            '<div class="voice-card">'
+            '<div class="voice-title">🎙️ Voice Assistant</div>'
+            '<div class="voice-subtitle">'
+            'Speak your question and let the Agentic RAG Assistant handle it.'
+            '</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
-        st.rerun()
+    # -----------------------------------------------------
+    # EXISTING VOICE COMPONENT
+    # -----------------------------------------------------
+
+    if VOICE_COMPONENT_AVAILABLE:
+
+        render_voice_input()
+
+    else:
+
+        st.markdown(
+            "### 🎤 Record your question"
+        )
+
+        st.caption(
+            "Use the microphone below to record your question."
+        )
+
+        audio = st.audio_input(
+            "🎤 Record Audio",
+            key="native_voice_recorder",
+        )
+
+        if audio is not None:
+
+            st.session_state.voice_audio = audio
+
+            st.success(
+                "✅ Voice recording captured."
+            )
+
+            st.audio(
+                audio,
+                format="audio/wav",
+            )
+
+    # -----------------------------------------------------
+    # VOICE CONVERSATION
+    # -----------------------------------------------------
+
+    if st.session_state.messages:
+
+        st.divider()
+
+        st.markdown(
+            '<div class="section-title">💬 Voice Conversation</div>',
+            unsafe_allow_html=True,
+        )
+
+        with st.container(
+            border=True,
+        ):
+
+            for message in st.session_state.messages:
+
+                role = message.get(
+                    "role",
+                    "assistant",
+                )
+
+                content = (
+                    message.get(
+                        "content",
+                        "",
+                    )
+                    or ""
+                )
+
+                with st.chat_message(role):
+
+                    st.markdown(content)
+
+                    if (
+                        role == "user"
+                        and message.get(
+                            "input_type",
+                            "",
+                        ) == "voice"
+                    ):
+
+                        st.caption(
+                            "🎙️ Voice message"
+                        )
+
+                    audio_data = message.get(
+                        "audio"
+                    )
+
+                    if audio_data:
+
+                        try:
+
+                            st.audio(
+                                audio_data,
+                                format="audio/wav",
+                            )
+
+                        except Exception as error:
+
+                            print(
+                                "[VOICE] AUDIO DISPLAY ERROR:",
+                                repr(error),
+                            )
 
 
 # =========================================================
-# RIGHT — KNOWLEDGE
+# IMPORTANT
+#
+# NO FOOTER.
+# NO TECHNOLOGY STACK TEXT.
+# NO ARCHITECTURE TEXT.
 # =========================================================
-
-with knowledge_col:
-
-    st.markdown(
-        "### 📚 Knowledge"
-    )
-
-    st.caption(
-        "Documents and knowledge base"
-    )
-
-    render_document_library()
-
-
-# =========================================================
-# FOOTER
-# =========================================================
-
-st.divider()
-
-st.caption(
-    "Agentic RAG • FastAPI • LangGraph • "
-    "Pinecone • Gemini • Mistral OCR"
-)

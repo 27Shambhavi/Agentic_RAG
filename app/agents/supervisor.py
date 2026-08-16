@@ -3,27 +3,12 @@ from app.agents.classifier import classify_intent
 
 
 # =========================================================
-# SUPERVISOR
+# VALID ROUTES
 # =========================================================
-#
-# IMPORTANT ROUTING POLICY
-#
-# 1. OCR request/context       -> OCR
-# 2. Weather                   -> WEATHER
-# 3. Explicit web request      -> WEB
-# 4. Greeting                  -> GREETING
-# 5. General conversation      -> GENERAL
-# 6. Active PDF + normal query -> RAG
-#
-# The classifier is NOT allowed to send a normal question
-# about an active PDF to WEB.
-#
-# This is intentional.
-# =========================================================
-
 
 VALID_ROUTES = {
     "rag",
+    "web_rag",
     "web",
     "weather",
     "ocr",
@@ -33,7 +18,62 @@ VALID_ROUTES = {
 
 
 # =========================================================
-# EXPLICIT WEB REQUEST
+# GREETING
+# =========================================================
+
+def is_greeting(query: str) -> bool:
+
+    q = (
+        query or ""
+    ).strip().lower()
+
+    greetings = {
+        "hi",
+        "hello",
+        "hey",
+        "hii",
+        "hiii",
+        "helo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "good night",
+        "wassup",
+        "what's up",
+        "whats up",
+    }
+
+    return q in greetings
+
+
+# =========================================================
+# WEATHER
+# =========================================================
+
+def is_weather_request(query: str) -> bool:
+
+    q = (
+        query or ""
+    ).strip().lower()
+
+    weather_words = {
+        "weather",
+        "temperature",
+        "forecast",
+        "rain",
+        "raining",
+        "snow",
+        "humidity",
+    }
+
+    return any(
+        word in q
+        for word in weather_words
+    )
+
+
+# =========================================================
+# EXPLICIT WEB SEARCH
 # =========================================================
 
 def is_explicit_web_request(
@@ -59,7 +99,6 @@ def is_explicit_web_request(
         "browse the web",
         "browse online",
 
-        "latest",
         "latest news",
         "today's news",
         "today news",
@@ -81,31 +120,34 @@ def is_explicit_web_request(
 
 
 # =========================================================
-# GENERAL / CONVERSATIONAL REQUEST
+# URL DETECTION
 # =========================================================
 
-def is_general_request(
+def extract_url(
     query: str,
-) -> bool:
+) -> str:
+
+    import re
 
     q = (
         query or ""
-    ).strip().lower()
+    ).strip()
 
-    general_patterns = (
-        "how are you",
-        "who are you",
-        "what can you do",
-        "help me",
-        "thank you",
-        "thanks",
-        "bye",
-        "goodbye",
+    pattern = r"https?://[^\s<>\"']+"
+
+    match = re.search(
+        pattern,
+        q,
+        flags=re.IGNORECASE,
     )
 
-    return any(
-        pattern in q
-        for pattern in general_patterns
+    if not match:
+        return ""
+
+    return (
+        match.group(0)
+        .rstrip(".,!?;:)]}")
+        .strip()
     )
 
 
@@ -116,6 +158,10 @@ def is_general_request(
 def supervisor(
     state: AgentState,
 ) -> AgentState:
+
+    # =====================================================
+    # INPUT
+    # =====================================================
 
     query = (
         state.get(
@@ -153,6 +199,14 @@ def supervisor(
         [],
     )
 
+    web_url = (
+        state.get(
+            "web_url",
+            "",
+        )
+        or ""
+    ).strip()
+
     # =====================================================
     # EMPTY QUERY
     # =====================================================
@@ -167,7 +221,7 @@ def supervisor(
         }
 
     # =====================================================
-    # DEBUG INPUT
+    # DEBUG
     # =====================================================
 
     print(
@@ -194,196 +248,33 @@ def supervisor(
         bool(ocr_text),
     )
 
-    # =====================================================
-    # 1. OCR
-    # =====================================================
-
-    if ocr_text:
-
-        route = "ocr"
-
-        print(
-            "[SUPERVISOR] OCR context detected -> OCR"
-        )
-
-        return {
-            **state,
-            "route": route,
-            "selected_document": selected_document,
-            "document_context": document_context,
-            "ocr_text": ocr_text,
-            "history": history,
-        }
+    print(
+        "State Web URL:",
+        web_url or "NONE",
+    )
 
     # =====================================================
-    # 2. WEATHER
+    # 1. EXPLICIT URL
     # =====================================================
-
-    q = query.lower()
-
-    weather_words = {
-        "weather",
-        "temperature",
-        "forecast",
-        "rain",
-        "raining",
-        "snow",
-        "humidity",
-    }
-
-    if any(
-        word in q
-        for word in weather_words
-    ):
-
-        route = "weather"
-
-        print(
-            "[SUPERVISOR] Weather request -> WEATHER"
-        )
-
-        return {
-            **state,
-            "route": route,
-            "selected_document": selected_document,
-            "document_context": document_context,
-            "ocr_text": ocr_text,
-            "history": history,
-        }
-
-    # =====================================================
-    # 3. EXPLICIT WEB REQUEST
     #
-    # IMPORTANT:
+    # URL MUST ALWAYS become WEB RAG.
     #
-    # Only an explicit request for online/current
-    # information is allowed to use WEB.
+    # This happens before classifier.
     # =====================================================
 
-    if is_explicit_web_request(
+    detected_url = extract_url(
         query
-    ):
+    )
 
-        route = "web"
-
-        print(
-            "[SUPERVISOR] Explicit web request -> WEB"
-        )
-
-        return {
-            **state,
-            "route": route,
-            "selected_document": selected_document,
-            "document_context": document_context,
-            "ocr_text": ocr_text,
-            "history": history,
-        }
-
-    # =====================================================
-    # 4. GREETING
-    # =====================================================
-
-    greetings = {
-        "hi",
-        "hello",
-        "hey",
-        "hii",
-        "hiii",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "good night",
-        "wassup",
-        "what's up",
-        "whats up",
-    }
-
-    if q in greetings:
-
-        route = "greeting"
+    if detected_url:
 
         print(
-            "[SUPERVISOR] Greeting -> GREETING"
-        )
-
-        return {
-            **state,
-            "route": route,
-            "selected_document": selected_document,
-            "document_context": document_context,
-            "ocr_text": ocr_text,
-            "history": history,
-        }
-
-    # =====================================================
-    # 5. GENERAL CONVERSATION
-    # =====================================================
-
-    if is_general_request(
-        query
-    ):
-
-        route = "general"
-
-        print(
-            "[SUPERVISOR] General conversation -> GENERAL"
-        )
-
-        return {
-            **state,
-            "route": route,
-            "selected_document": selected_document,
-            "document_context": document_context,
-            "ocr_text": ocr_text,
-            "history": history,
-        }
-
-    # =====================================================
-    # 6. ACTIVE DOCUMENT
-    #
-    # THIS IS THE CRITICAL FIX.
-    #
-    # If a document is selected, ALL remaining normal
-    # questions go to RAG.
-    #
-    # We do NOT ask the LLM whether it should be RAG.
-    #
-    # Example:
-    #
-    # Selected:
-    #     Ayushman Bharat Yojna.pdf
-    #
-    # User:
-    #     What is Ayushman Bharat Yojana?
-    #
-    # -> RAG
-    #
-    # User:
-    #     What are the benefits?
-    #
-    # -> RAG
-    #
-    # User:
-    #     What are the schemes?
-    #
-    # -> RAG
-    #
-    # User:
-    #     Summarize this document.
-    #
-    # -> RAG
-    # =====================================================
-
-    if selected_document and document_context:
-
-        route = "rag"
-
-        print(
-            "[SUPERVISOR] Active document -> RAG"
+            "[SUPERVISOR] URL detected -> WEB RAG"
         )
 
         print(
-            "[SUPERVISOR] Classifier bypassed for document query."
+            "URL:",
+            detected_url,
         )
 
         print(
@@ -392,18 +283,170 @@ def supervisor(
 
         return {
             **state,
-            "route": route,
-            "selected_document": selected_document,
-            "document_context": True,
-            "ocr_text": ocr_text,
-            "history": history,
+
+            "route": "web_rag",
+
+            "web_url": detected_url,
+
+            "web_context": True,
         }
 
     # =====================================================
-    # 7. NO DOCUMENT
+    # If frontend already supplied URL
+    # =====================================================
+
+    if web_url:
+
+        print(
+            "[SUPERVISOR] Existing web URL -> WEB RAG"
+        )
+
+        print(
+            "=============================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "web_rag",
+
+            "web_url": web_url,
+
+            "web_context": True,
+        }
+
+    # =====================================================
+    # 2. OCR
+    # =====================================================
+
+    if ocr_text:
+
+        print(
+            "[SUPERVISOR] OCR context -> OCR"
+        )
+
+        print(
+            "=============================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "ocr",
+
+            "ocr_text": ocr_text,
+        }
+
+    # =====================================================
+    # 3. WEATHER
+    # =====================================================
+
+    if is_weather_request(
+        query
+    ):
+
+        print(
+            "[SUPERVISOR] Weather -> WEATHER"
+        )
+
+        print(
+            "=============================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "weather",
+        }
+
+    # =====================================================
+    # 4. GREETING
+    # =====================================================
+
+    if is_greeting(
+        query
+    ):
+
+        print(
+            "[SUPERVISOR] Greeting -> GREETING"
+        )
+
+        print(
+            "=============================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "greeting",
+        }
+
+    # =====================================================
+    # 5. EXPLICIT WEB SEARCH
+    # =====================================================
+
+    if is_explicit_web_request(
+        query
+    ):
+
+        print(
+            "[SUPERVISOR] Explicit web request -> WEB"
+        )
+
+        print(
+            "=============================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "web",
+        }
+
+    # =====================================================
+    # 6. ACTIVE PDF
+    # =====================================================
     #
-    # Only here do we allow the classifier/LLM to decide
-    # between general, web, etc.
+    # THIS IS IMPORTANT.
+    #
+    # If a PDF is selected, normal questions go to RAG.
+    #
+    # This prevents the classifier from accidentally
+    # sending PDF questions to WEB.
+    # =====================================================
+
+    if (
+        selected_document
+        and document_context
+    ):
+
+        print(
+            "[SUPERVISOR] Active PDF -> RAG"
+        )
+
+        print(
+            "[SUPERVISOR] Classifier bypassed."
+        )
+
+        print(
+            "=============================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "rag",
+
+            "selected_document": selected_document,
+
+            "document_context": True,
+        }
+
+    # =====================================================
+    # 7. NO SPECIAL CONTEXT
+    # =====================================================
+    #
+    # ONLY NOW do we ask the classifier.
     # =====================================================
 
     try:
@@ -417,20 +460,24 @@ def supervisor(
         )
 
         route = (
-            route or "general"
+            route
+            or "general"
         ).strip().lower()
 
     except Exception as error:
 
         print(
-            "[SUPERVISOR CLASSIFIER ERROR]",
-            repr(error),
+            "[SUPERVISOR CLASSIFIER ERROR]"
+        )
+
+        print(
+            repr(error)
         )
 
         route = "general"
 
     # =====================================================
-    # CLEAN ROUTE
+    # CLEAN
     # =====================================================
 
     route = (
@@ -442,17 +489,21 @@ def supervisor(
         .lower()
     )
 
+    # =====================================================
+    # VALIDATE
+    # =====================================================
+
     if route not in VALID_ROUTES:
 
         print(
-            "[SUPERVISOR] Invalid classifier route:",
+            "[SUPERVISOR] Invalid route:",
             route,
         )
 
         route = "general"
 
     # =====================================================
-    # FINAL DEBUG
+    # FINAL
     # =====================================================
 
     print(
@@ -464,15 +515,18 @@ def supervisor(
         "=============================================\n"
     )
 
-    # =====================================================
-    # RETURN
-    # =====================================================
-
     return {
         **state,
+
         "route": route,
+
         "selected_document": selected_document,
+
         "document_context": document_context,
+
         "ocr_text": ocr_text,
+
         "history": history,
+
+        "web_url": web_url,
     }
