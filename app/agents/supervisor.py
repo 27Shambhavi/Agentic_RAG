@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import re
+
 from app.agents.state import AgentState
 from app.agents.classifier import classify_intent
 
@@ -21,7 +25,9 @@ VALID_ROUTES = {
 # GREETING
 # =========================================================
 
-def is_greeting(query: str) -> bool:
+def is_greeting(
+    query: str,
+) -> bool:
 
     q = (
         query or ""
@@ -50,7 +56,9 @@ def is_greeting(query: str) -> bool:
 # WEATHER
 # =========================================================
 
-def is_weather_request(query: str) -> bool:
+def is_weather_request(
+    query: str,
+) -> bool:
 
     q = (
         query or ""
@@ -75,6 +83,21 @@ def is_weather_request(query: str) -> bool:
 # =========================================================
 # EXPLICIT WEB SEARCH
 # =========================================================
+#
+# IMPORTANT:
+#
+# This means NORMAL web search.
+#
+# It is different from Web RAG.
+#
+# Examples:
+#
+# "search the web for latest AI news"
+# "latest news about OpenAI"
+#
+# -> WEB
+#
+# =========================================================
 
 def is_explicit_web_request(
     query: str,
@@ -88,18 +111,31 @@ def is_explicit_web_request(
         return False
 
     web_patterns = (
+
+        # -------------------------------------------------
+        # Explicit search
+        # -------------------------------------------------
+
         "search the web",
         "search web",
         "search the internet",
+        "search internet",
         "search online",
         "look it up online",
         "look it up on the internet",
         "find it online",
         "google it",
+        "google this",
         "browse the web",
         "browse online",
 
+        # -------------------------------------------------
+        # Current information
+        # -------------------------------------------------
+
         "latest news",
+        "latest update",
+        "latest information",
         "today's news",
         "today news",
         "current news",
@@ -108,8 +144,10 @@ def is_explicit_web_request(
 
         "what happened today",
         "what is happening today",
+
         "current information",
         "current status",
+        "current update",
         "live information",
     )
 
@@ -122,18 +160,28 @@ def is_explicit_web_request(
 # =========================================================
 # URL DETECTION
 # =========================================================
+#
+# Detect:
+#
+# https://example.com
+# http://example.com
+#
+# Also handles a URL followed by punctuation.
+#
+# =========================================================
 
 def extract_url(
     query: str,
 ) -> str:
 
-    import re
-
     q = (
         query or ""
     ).strip()
 
-    pattern = r"https?://[^\s<>\"']+"
+    if not q:
+        return ""
+
+    pattern = r"""https?://[^\s<>"']+"""
 
     match = re.search(
         pattern,
@@ -144,11 +192,15 @@ def extract_url(
     if not match:
         return ""
 
-    return (
+    url = (
         match.group(0)
-        .rstrip(".,!?;:)]}")
         .strip()
+        .rstrip(
+            ".,!?;:)]}"
+        )
     )
+
+    return url
 
 
 # =========================================================
@@ -199,6 +251,12 @@ def supervisor(
         [],
     )
 
+    if not isinstance(
+        history,
+        list,
+    ):
+        history = []
+
     web_url = (
         state.get(
             "web_url",
@@ -215,17 +273,36 @@ def supervisor(
 
         return {
             **state,
+
             "route": "general",
+
             "answer": "",
+
             "sources": [],
         }
+
+    # =====================================================
+    # URL IN CURRENT QUERY
+    # =====================================================
+
+    detected_url = extract_url(
+        query
+    )
 
     # =====================================================
     # DEBUG
     # =====================================================
 
     print(
-        "\n================ SUPERVISOR ================"
+        "\n================================================"
+    )
+
+    print(
+        "                 SUPERVISOR"
+    )
+
+    print(
+        "================================================"
     )
 
     print(
@@ -244,32 +321,66 @@ def supervisor(
     )
 
     print(
+        "State Web URL:",
+        web_url or "NONE",
+    )
+
+    print(
+        "URL in current query:",
+        detected_url or "NONE",
+    )
+
+    print(
         "OCR available:",
         bool(ocr_text),
     )
 
     print(
-        "State Web URL:",
-        web_url or "NONE",
+        "History messages:",
+        len(history),
+    )
+
+    print(
+        "================================================"
     )
 
     # =====================================================
-    # 1. EXPLICIT URL
+    # PRIORITY 1
+    # CURRENT MESSAGE CONTAINS URL
     # =====================================================
     #
-    # URL MUST ALWAYS become WEB RAG.
+    # THIS IS THE MOST IMPORTANT RULE.
     #
-    # This happens before classifier.
+    # If the user gives a URL in the current message:
+    #
+    #     URL
+    #      ↓
+    #   WEB_RAG
+    #
+    # It must NEVER become normal WEB search.
+    #
+    # Example:
+    #
+    # https://www.magicbricks.com/
+    #
+    # -> web_rag
+    #
+    # Even if:
+    #
+    # "latest information"
+    #
+    # appears in the same query.
+    #
     # =====================================================
-
-    detected_url = extract_url(
-        query
-    )
 
     if detected_url:
 
         print(
-            "[SUPERVISOR] URL detected -> WEB RAG"
+            "\n[SUPERVISOR]"
+        )
+
+        print(
+            "CURRENT URL DETECTED"
         )
 
         print(
@@ -278,7 +389,11 @@ def supervisor(
         )
 
         print(
-            "=============================================\n"
+            "FORCED ROUTE: WEB_RAG"
+        )
+
+        print(
+            "================================================\n"
         )
 
         return {
@@ -292,17 +407,54 @@ def supervisor(
         }
 
     # =====================================================
-    # If frontend already supplied URL
+    # PRIORITY 2
+    # EXISTING WEB RAG URL
+    # =====================================================
+    #
+    # This handles follow-up questions.
+    #
+    # Example:
+    #
+    # First:
+    #
+    # https://www.magicbricks.com/
+    #
+    # Second:
+    #
+    # "What services does it provide?"
+    #
+    # If no PDF is active, reuse the Web RAG URL.
+    #
     # =====================================================
 
-    if web_url:
+    if (
+        web_url
+        and not selected_document
+    ):
 
         print(
-            "[SUPERVISOR] Existing web URL -> WEB RAG"
+            "\n[SUPERVISOR]"
         )
 
         print(
-            "=============================================\n"
+            "EXISTING WEB RAG URL"
+        )
+
+        print(
+            "URL:",
+            web_url,
+        )
+
+        print(
+            "No active PDF."
+        )
+
+        print(
+            "FORCED ROUTE: WEB_RAG"
+        )
+
+        print(
+            "================================================\n"
         )
 
         return {
@@ -316,7 +468,102 @@ def supervisor(
         }
 
     # =====================================================
-    # 2. OCR
+    # PRIORITY 3
+    # ACTIVE PDF
+    # =====================================================
+    #
+    # This is the protection against the exact problem
+    # you were facing.
+    #
+    # Example:
+    #
+    # Previous Web RAG:
+    #
+    #     https://www.magicbricks.com/
+    #
+    # Then user selects:
+    #
+    #     Ayushman Bharat Yojna.pdf
+    #
+    # Then asks:
+    #
+    #     "what are the schemes?"
+    #
+    # Frontend/backend might still contain the old URL.
+    #
+    # We IGNORE it.
+    #
+    # Result:
+    #
+    #     PDF -> RAG
+    #
+    # =====================================================
+
+    if (
+        selected_document
+        and document_context
+    ):
+
+        if web_url:
+
+            print(
+                "\n[SUPERVISOR]"
+            )
+
+            print(
+                "ACTIVE PDF DETECTED"
+            )
+
+            print(
+                "Ignoring stale Web URL:",
+                web_url,
+            )
+
+            print(
+                "The old URL WILL NOT be used."
+            )
+
+            print(
+                "================================================"
+            )
+
+        print(
+            "[SUPERVISOR] ACTIVE PDF -> RAG"
+        )
+
+        print(
+            "[SUPERVISOR] Classifier bypassed."
+        )
+
+        print(
+            "================================================\n"
+        )
+
+        return {
+            **state,
+
+            "route": "rag",
+
+            "selected_document": (
+                selected_document
+            ),
+
+            "document_context": True,
+
+            # -------------------------------------------------
+            # CRITICAL
+            # -------------------------------------------------
+            #
+            # Remove stale Web RAG state.
+            #
+            "web_url": "",
+
+            "web_context": False,
+        }
+
+    # =====================================================
+    # PRIORITY 4
+    # OCR
     # =====================================================
 
     if ocr_text:
@@ -326,7 +573,7 @@ def supervisor(
         )
 
         print(
-            "=============================================\n"
+            "================================================\n"
         )
 
         return {
@@ -338,7 +585,8 @@ def supervisor(
         }
 
     # =====================================================
-    # 3. WEATHER
+    # PRIORITY 5
+    # WEATHER
     # =====================================================
 
     if is_weather_request(
@@ -350,7 +598,7 @@ def supervisor(
         )
 
         print(
-            "=============================================\n"
+            "================================================\n"
         )
 
         return {
@@ -360,7 +608,8 @@ def supervisor(
         }
 
     # =====================================================
-    # 4. GREETING
+    # PRIORITY 6
+    # GREETING
     # =====================================================
 
     if is_greeting(
@@ -372,7 +621,7 @@ def supervisor(
         )
 
         print(
-            "=============================================\n"
+            "================================================\n"
         )
 
         return {
@@ -382,7 +631,20 @@ def supervisor(
         }
 
     # =====================================================
-    # 5. EXPLICIT WEB SEARCH
+    # PRIORITY 7
+    # EXPLICIT NORMAL WEB SEARCH
+    # =====================================================
+    #
+    # IMPORTANT:
+    #
+    # We reach this point ONLY when:
+    #
+    # - no URL in current query
+    # - no active Web RAG URL
+    # - no active PDF
+    #
+    # Therefore this is genuinely normal Web Search.
+    #
     # =====================================================
 
     if is_explicit_web_request(
@@ -390,72 +652,53 @@ def supervisor(
     ):
 
         print(
-            "[SUPERVISOR] Explicit web request -> WEB"
+            "[SUPERVISOR] Explicit web search -> WEB"
         )
 
         print(
-            "=============================================\n"
+            "================================================\n"
         )
 
         return {
             **state,
 
             "route": "web",
+
+            "web_url": "",
+
+            "web_context": False,
         }
 
     # =====================================================
-    # 6. ACTIVE PDF
+    # PRIORITY 8
+    # CLASSIFIER
     # =====================================================
     #
-    # THIS IS IMPORTANT.
+    # At this point there is:
     #
-    # If a PDF is selected, normal questions go to RAG.
+    # - no URL
+    # - no active Web RAG URL
+    # - no active PDF
+    # - no OCR
+    # - no weather
+    # - no greeting
+    # - no explicit web request
     #
-    # This prevents the classifier from accidentally
-    # sending PDF questions to WEB.
-    # =====================================================
-
-    if (
-        selected_document
-        and document_context
-    ):
-
-        print(
-            "[SUPERVISOR] Active PDF -> RAG"
-        )
-
-        print(
-            "[SUPERVISOR] Classifier bypassed."
-        )
-
-        print(
-            "=============================================\n"
-        )
-
-        return {
-            **state,
-
-            "route": "rag",
-
-            "selected_document": selected_document,
-
-            "document_context": True,
-        }
-
-    # =====================================================
-    # 7. NO SPECIAL CONTEXT
-    # =====================================================
+    # NOW classifier is allowed to decide.
     #
-    # ONLY NOW do we ask the classifier.
     # =====================================================
 
     try:
 
         route = classify_intent(
             query=query,
+
             history=history,
+
             ocr_text=ocr_text,
+
             selected_document="",
+
             document_context=False,
         )
 
@@ -477,20 +720,51 @@ def supervisor(
         route = "general"
 
     # =====================================================
-    # CLEAN
+    # CLEAN CLASSIFIER OUTPUT
     # =====================================================
 
     route = (
         route
-        .replace("`", "")
-        .replace('"', "")
-        .replace("'", "")
+        .replace(
+            "`",
+            "",
+        )
+        .replace(
+            '"',
+            "",
+        )
+        .replace(
+            "'",
+            "",
+        )
         .strip()
         .lower()
     )
 
     # =====================================================
-    # VALIDATE
+    # SAFETY:
+    # CLASSIFIER MUST NOT INVENT WEB_RAG
+    #
+    # If there is no URL, classifier cannot legitimately
+    # choose Web RAG.
+    #
+    # =====================================================
+
+    if route == "web_rag":
+
+        print(
+            "[SUPERVISOR] Classifier returned WEB_RAG "
+            "without a URL."
+        )
+
+        print(
+            "[SUPERVISOR] Converting to GENERAL."
+        )
+
+        route = "general"
+
+    # =====================================================
+    # VALIDATE ROUTE
     # =====================================================
 
     if route not in VALID_ROUTES:
@@ -503,30 +777,58 @@ def supervisor(
         route = "general"
 
     # =====================================================
-    # FINAL
+    # FINAL DEBUG
     # =====================================================
 
     print(
-        "[SUPERVISOR] Final decision:",
+        "\n[SUPERVISOR] FINAL ROUTE:",
         route,
     )
 
     print(
-        "=============================================\n"
+        "[SUPERVISOR] FINAL WEB URL:",
+        web_url or "NONE",
     )
+
+    print(
+        "[SUPERVISOR] FINAL DOCUMENT:",
+        selected_document or "NONE",
+    )
+
+    print(
+        "================================================\n"
+    )
+
+    # =====================================================
+    # FINAL STATE
+    # =====================================================
 
     return {
         **state,
 
         "route": route,
 
-        "selected_document": selected_document,
+        "selected_document": (
+            selected_document
+        ),
 
-        "document_context": document_context,
+        "document_context": (
+            document_context
+        ),
 
-        "ocr_text": ocr_text,
+        "ocr_text": (
+            ocr_text
+        ),
 
-        "history": history,
+        "history": (
+            history
+        ),
 
-        "web_url": web_url,
+        "web_url": (
+            web_url
+        ),
+
+        "web_context": bool(
+            web_url
+        ),
     }

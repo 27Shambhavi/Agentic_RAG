@@ -33,9 +33,14 @@ def _initialize_state() -> None:
         "messages": [],
         "selected_document": "",
         "document_context": False,
+
         "ocr_text": "",
+
+        # Active Web RAG URL
         "web_url": "",
         "web_context": False,
+
+        # Voice
         "voice_response_requested": False,
         "voice_audio": None,
     }
@@ -43,6 +48,7 @@ def _initialize_state() -> None:
     for key, value in defaults.items():
 
         if key not in st.session_state:
+
             st.session_state[key] = value
 
 
@@ -55,23 +61,33 @@ def _build_history() -> list[dict]:
     messages = st.session_state.messages
 
     if not messages:
+
         return []
 
     history = []
 
-    # Exclude the newest message because it is the current
-    # request being sent to the backend.
+    # -----------------------------------------------------
+    # Exclude newest message.
+    #
+    # The newest message is the current request.
+    # -----------------------------------------------------
+
     for message in messages[:-1]:
 
         if not isinstance(message, dict):
+
             continue
 
         content = str(
-            message.get("content", "")
+            message.get(
+                "content",
+                "",
+            )
             or ""
         ).strip()
 
         if not content:
+
             continue
 
         history.append(
@@ -91,7 +107,9 @@ def _build_history() -> list[dict]:
 # DISPLAY MESSAGE
 # =========================================================
 
-def _display_message(message: dict) -> None:
+def _display_message(
+    message: dict,
+) -> None:
 
     role = message.get(
         "role",
@@ -108,10 +126,20 @@ def _display_message(message: dict) -> None:
 
     with st.chat_message(role):
 
-        if content:
-            st.markdown(content)
+        # -------------------------------------------------
+        # CONTENT
+        # -------------------------------------------------
 
-        # Voice user message
+        if content:
+
+            st.markdown(
+                content
+            )
+
+        # -------------------------------------------------
+        # VOICE USER MESSAGE
+        # -------------------------------------------------
+
         if (
             role == "user"
             and message.get(
@@ -119,9 +147,15 @@ def _display_message(message: dict) -> None:
                 "",
             ) == "voice"
         ):
-            st.caption("🎙️ Voice message")
 
-        # Route
+            st.caption(
+                "🎙️ Voice message"
+            )
+
+        # -------------------------------------------------
+        # ROUTE
+        # -------------------------------------------------
+
         route = (
             message.get(
                 "route",
@@ -130,7 +164,9 @@ def _display_message(message: dict) -> None:
             or ""
         )
 
-        route = str(route).strip().lower()
+        route = str(
+            route
+        ).strip().lower()
 
         if route:
 
@@ -143,7 +179,10 @@ def _display_message(message: dict) -> None:
                 f"Route: {label}"
             )
 
-        # Web URL
+        # -------------------------------------------------
+        # WEB RAG URL
+        # -------------------------------------------------
+
         message_web_url = (
             message.get(
                 "web_url",
@@ -158,7 +197,10 @@ def _display_message(message: dict) -> None:
                 f"🌐 Webpage: {message_web_url}"
             )
 
-        # Sources
+        # -------------------------------------------------
+        # SOURCES
+        # -------------------------------------------------
+
         sources = (
             message.get(
                 "sources",
@@ -168,9 +210,15 @@ def _display_message(message: dict) -> None:
         )
 
         if sources:
-            render_sources(sources)
 
-        # Assistant audio
+            render_sources(
+                sources
+            )
+
+        # -------------------------------------------------
+        # ASSISTANT AUDIO
+        # -------------------------------------------------
+
         audio_data = message.get(
             "audio",
             None,
@@ -207,84 +255,172 @@ def _get_pending_voice_message():
     )
 
     if not requested:
+
         return None
 
     messages = st.session_state.messages
 
     if not messages:
+
         return None
 
     latest = messages[-1]
 
-    if not isinstance(latest, dict):
+    if not isinstance(
+        latest,
+        dict,
+    ):
+
         return None
 
     if (
         latest.get("role") == "user"
         and latest.get("input_type") == "voice"
     ):
+
         return latest
 
     return None
 
 
 # =========================================================
-# WEB URL
+# WEB URL RESOLUTION
+# =========================================================
+#
+# ROUTING RULES
+#
+# ---------------------------------------------------------
+#
+# 1. URL in CURRENT user message
+#       ↓
+#    WEB RAG
+#
+# ---------------------------------------------------------
+#
+# 2. No URL + PDF selected
+#       ↓
+#    CLEAR OLD WEB URL
+#       ↓
+#    PDF RAG
+#
+# ---------------------------------------------------------
+#
+# 3. No URL + no PDF + previous Web RAG URL
+#       ↓
+#    REUSE URL
+#       ↓
+#    WEB RAG follow-up
+#
+# ---------------------------------------------------------
+#
+# This prevents:
+#
+# Magicbricks URL
+#       ↓
+# new PDF selected
+#       ↓
+# old Magicbricks URL
+#       ↓
+# WRONG WEB SEARCH
+#
 # =========================================================
 
 def _resolve_web_url(
     user_query: str,
+    selected_document: str = "",
 ) -> str:
 
-    current_url = ""
+    user_query = (
+        user_query or ""
+    ).strip()
+
+    selected_document = (
+        selected_document or ""
+    ).strip()
+
+    # =====================================================
+    # 1. DETECT URL IN CURRENT QUERY
+    # =====================================================
+
+    detected_url = ""
 
     try:
 
         detected_url = (
-            extract_url(user_query)
+            extract_url(
+                user_query
+            )
             or ""
         ).strip()
-
-        if detected_url:
-
-            current_url = detected_url
-
-            st.session_state.web_url = (
-                detected_url
-            )
-
-            st.session_state.web_context = True
-
-            print(
-                "[WEB] New URL detected:",
-                detected_url,
-            )
-
-        else:
-
-            current_url = (
-                st.session_state.get(
-                    "web_url",
-                    "",
-                )
-                or ""
-            ).strip()
-
-            if current_url:
-
-                print(
-                    "[WEB] Reusing saved URL:",
-                    current_url,
-                )
 
     except Exception as error:
 
         print(
-            "[WEB URL DETECTION ERROR]",
+            "[WEB URL EXTRACTION ERROR]",
             repr(error),
         )
 
-        current_url = (
+        detected_url = ""
+
+    # =====================================================
+    # EXPLICIT CURRENT URL
+    # =====================================================
+    #
+    # CURRENT URL HAS HIGHEST PRIORITY.
+    #
+    # Example:
+    #
+    # https://www.magicbricks.com/
+    # what services does this provide?
+    #
+    # -> WEB RAG
+    #
+    # =====================================================
+
+    if detected_url:
+
+        print(
+            "\n[WEB] =================================="
+        )
+
+        print(
+            "[WEB] Explicit URL detected."
+        )
+
+        print(
+            "[WEB] URL:",
+            detected_url,
+        )
+
+        print(
+            "[WEB] Route should be WEB RAG."
+        )
+
+        print(
+            "[WEB] ==================================\n"
+        )
+
+        st.session_state.web_url = (
+            detected_url
+        )
+
+        st.session_state.web_context = True
+
+        return detected_url
+
+    # =====================================================
+    # 2. ACTIVE PDF
+    # =====================================================
+    #
+    # NO NEW URL + PDF SELECTED
+    #
+    # Clear any stale Web RAG URL.
+    #
+    # =====================================================
+
+    if selected_document:
+
+        old_url = (
             st.session_state.get(
                 "web_url",
                 "",
@@ -292,12 +428,96 @@ def _resolve_web_url(
             or ""
         ).strip()
 
-    st.session_state.web_url = current_url
-    st.session_state.web_context = bool(
-        current_url
+        if old_url:
+
+            print(
+                "\n[WEB] =================================="
+            )
+
+            print(
+                "[WEB] Active PDF detected."
+            )
+
+            print(
+                "[WEB] Clearing stale Web URL:",
+                old_url,
+            )
+
+            print(
+                "[WEB] PDF RAG will handle this request."
+            )
+
+            print(
+                "[WEB] ==================================\n"
+            )
+
+        # -------------------------------------------------
+        # CRITICAL
+        # -------------------------------------------------
+        #
+        # Do NOT send the previous URL to backend.
+        #
+        # -------------------------------------------------
+
+        st.session_state.web_url = ""
+
+        st.session_state.web_context = False
+
+        return ""
+
+    # =====================================================
+    # 3. NO PDF
+    #
+    # REUSE PREVIOUS WEB RAG URL
+    # =====================================================
+
+    current_url = (
+        st.session_state.get(
+            "web_url",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if current_url:
+
+        print(
+            "\n[WEB] =================================="
+        )
+
+        print(
+            "[WEB] Reusing previous Web RAG URL:"
+        )
+
+        print(
+            current_url
+        )
+
+        print(
+            "[WEB] ==================================\n"
+        )
+
+        st.session_state.web_url = (
+            current_url
+        )
+
+        st.session_state.web_context = True
+
+        return current_url
+
+    # =====================================================
+    # 4. NO URL
+    # =====================================================
+
+    st.session_state.web_url = ""
+
+    st.session_state.web_context = False
+
+    print(
+        "[WEB] No active Web RAG URL."
     )
 
-    return current_url
+    return ""
 
 
 # =========================================================
@@ -315,7 +535,9 @@ def _send_request(
     ocr_text: str,
 ) -> None:
 
-    with st.chat_message("assistant"):
+    with st.chat_message(
+        "assistant"
+    ):
 
         spinner_text = (
             "🎙️ Thinking and preparing voice response..."
@@ -323,7 +545,9 @@ def _send_request(
             else "Thinking..."
         )
 
-        with st.spinner(spinner_text):
+        with st.spinner(
+            spinner_text
+        ):
 
             try:
 
@@ -331,45 +555,76 @@ def _send_request(
                     "\n========== FRONTEND CHAT =========="
                 )
 
-                print("User:", user_query)
-                print("Input type:", input_type)
+                print(
+                    "User:",
+                    user_query,
+                )
+
+                print(
+                    "Input type:",
+                    input_type,
+                )
+
                 print(
                     "Selected document:",
                     selected_document or "NONE",
                 )
+
                 print(
                     "Document context:",
                     document_context,
                 )
+
                 print(
                     "Web URL:",
                     web_url or "NONE",
                 )
+
                 print(
                     "Web context:",
                     web_context,
                 )
+
                 print(
                     "OCR available:",
                     bool(ocr_text),
                 )
+
                 print(
                     "History messages:",
                     len(history),
                 )
 
-                # =========================================
+                # =================================================
                 # BACKEND CALL
-                # =========================================
+                # =================================================
 
                 result = api_client.chat(
                     message=user_query,
-                    selected_document=selected_document,
-                    document_context=document_context,
-                    web_url=web_url,
-                    web_context=web_context,
-                    ocr_text=ocr_text,
-                    history=history,
+
+                    selected_document=(
+                        selected_document
+                    ),
+
+                    document_context=(
+                        document_context
+                    ),
+
+                    web_url=(
+                        web_url
+                    ),
+
+                    web_context=(
+                        web_context
+                    ),
+
+                    ocr_text=(
+                        ocr_text
+                    ),
+
+                    history=(
+                        history
+                    ),
                 )
 
                 print(
@@ -377,15 +632,22 @@ def _send_request(
                     result,
                 )
 
-                if not isinstance(result, dict):
+                # =================================================
+                # VALIDATE RESPONSE
+                # =================================================
+
+                if not isinstance(
+                    result,
+                    dict,
+                ):
 
                     raise ValueError(
                         "Backend returned an invalid response."
                     )
 
-                # =========================================
+                # =================================================
                 # ANSWER
-                # =========================================
+                # =================================================
 
                 answer = (
                     result.get(
@@ -401,9 +663,9 @@ def _send_request(
                         "The backend returned no answer."
                     )
 
-                # =========================================
+                # =================================================
                 # ROUTE
-                # =========================================
+                # =================================================
 
                 route = (
                     result.get(
@@ -417,9 +679,9 @@ def _send_request(
                     route
                 ).strip().lower()
 
-                # =========================================
+                # =================================================
                 # SOURCES
-                # =========================================
+                # =================================================
 
                 sources = (
                     result.get(
@@ -429,35 +691,75 @@ def _send_request(
                     or []
                 )
 
-                # =========================================
-                # WEB URL
-                # =========================================
+                # =================================================
+                # BACKEND WEB URL
+                # =================================================
 
                 backend_web_url = (
                     result.get(
                         "web_url",
-                        web_url,
+                        "",
                     )
-                    or web_url
-                )
-
-                backend_web_url = str(
-                    backend_web_url
+                    or ""
                 ).strip()
 
-                if backend_web_url:
+                # =================================================
+                # WEB RAG STATE MANAGEMENT
+                # =================================================
+                #
+                # IMPORTANT:
+                #
+                # Only Web RAG can keep a Web URL alive.
+                #
+                # PDF RAG clears it.
+                #
+                # =================================================
 
-                    st.session_state.web_url = (
-                        backend_web_url
-                    )
+                if route == "web_rag":
 
-                    st.session_state.web_context = True
+                    # Backend URL is authoritative.
+                    if backend_web_url:
 
-                # =========================================
+                        st.session_state.web_url = (
+                            backend_web_url
+                        )
+
+                        st.session_state.web_context = True
+
+                    # Fallback to URL we sent.
+                    elif web_url:
+
+                        st.session_state.web_url = (
+                            web_url
+                        )
+
+                        st.session_state.web_context = True
+
+                elif route == "rag":
+
+                    # -------------------------------------------------
+                    # PDF RAG WON
+                    # -------------------------------------------------
+                    #
+                    # Absolutely do not preserve old Web RAG URL.
+                    #
+                    # -------------------------------------------------
+
+                    st.session_state.web_url = ""
+
+                    st.session_state.web_context = False
+
+                # =================================================
                 # DISPLAY ANSWER
-                # =========================================
+                # =================================================
 
-                st.markdown(answer)
+                st.markdown(
+                    answer
+                )
+
+                # =================================================
+                # DISPLAY ROUTE
+                # =================================================
 
                 label = ROUTE_LABELS.get(
                     route,
@@ -468,21 +770,32 @@ def _send_request(
                     f"Route: {label}"
                 )
 
+                # =================================================
+                # DISPLAY WEB RAG URL
+                # =================================================
+
                 if (
-                    backend_web_url
-                    and route == "web_rag"
+                    route == "web_rag"
+                    and backend_web_url
                 ):
 
                     st.caption(
                         f"🌐 Source webpage: {backend_web_url}"
                     )
 
-                if sources:
-                    render_sources(sources)
+                # =================================================
+                # SOURCES
+                # =================================================
 
-                # =========================================
+                if sources:
+
+                    render_sources(
+                        sources
+                    )
+
+                # =================================================
                 # VOICE RESPONSE
-                # =========================================
+                # =================================================
 
                 audio_data = None
 
@@ -530,31 +843,51 @@ def _send_request(
                             "be generated."
                         )
 
-                # =========================================
+                # =================================================
                 # SAVE ASSISTANT MESSAGE
-                # =========================================
+                # =================================================
 
                 assistant_message = {
+
                     "role": "assistant",
+
                     "content": answer,
+
                     "route": route,
+
                     "sources": sources,
+
+                    # Only Web RAG messages retain URL.
                     "web_url": (
                         backend_web_url
                         if route == "web_rag"
                         else ""
                     ),
-                    "selected_document": selected_document,
-                    "document_context": document_context,
+
+                    "selected_document": (
+                        selected_document
+                    ),
+
+                    "document_context": (
+                        document_context
+                    ),
+
                     "input_type": "assistant",
                 }
 
                 if audio_data:
-                    assistant_message["audio"] = audio_data
+
+                    assistant_message[
+                        "audio"
+                    ] = audio_data
 
                 st.session_state.messages.append(
                     assistant_message
                 )
+
+                # =================================================
+                # RESET VOICE FLAG
+                # =================================================
 
                 st.session_state.voice_response_requested = (
                     False
@@ -562,6 +895,10 @@ def _send_request(
 
                 print(
                     "[CHAT] Request completed."
+                )
+
+                print(
+                    "====================================\n"
                 )
 
             except Exception as error:
@@ -582,15 +919,22 @@ def _send_request(
                     f"Backend error: {error}"
                 )
 
-                st.error(error_message)
+                st.error(
+                    error_message
+                )
 
                 st.session_state.messages.append(
                     {
                         "role": "assistant",
+
                         "content": error_message,
+
                         "route": "error",
+
                         "sources": [],
+
                         "web_url": "",
+
                         "input_type": "assistant",
                     }
                 )
@@ -617,7 +961,9 @@ def render_chat() -> None:
         st.markdown(
             '<div class="chat-empty-state">'
             '<div class="chat-empty-icon">💬</div>'
-            '<div class="chat-empty-title">Start a conversation</div>'
+            '<div class="chat-empty-title">'
+            'Start a conversation'
+            '</div>'
             '<div class="chat-empty-text">'
             'Ask a question about your documents, a webpage, '
             'an image, or anything else.'
@@ -628,8 +974,13 @@ def render_chat() -> None:
 
     else:
 
-        for message in st.session_state.messages:
-            _display_message(message)
+        for message in (
+            st.session_state.messages
+        ):
+
+            _display_message(
+                message
+            )
 
     # =====================================================
     # PENDING VOICE
@@ -640,7 +991,7 @@ def render_chat() -> None:
     )
 
     # =====================================================
-    # NORMAL TEXT INPUT
+    # TEXT INPUT
     # =====================================================
 
     prompt = None
@@ -669,16 +1020,29 @@ def render_chat() -> None:
 
     else:
 
-        if not prompt or not prompt.strip():
+        if (
+            not prompt
+            or not prompt.strip()
+        ):
+
             return
 
-        user_query = prompt.strip()
+        user_query = (
+            prompt.strip()
+        )
+
         input_type = "text"
+
+        # -------------------------------------------------
+        # Save user message
+        # -------------------------------------------------
 
         st.session_state.messages.append(
             {
                 "role": "user",
+
                 "content": user_query,
+
                 "input_type": "text",
             }
         )
@@ -689,11 +1053,14 @@ def render_chat() -> None:
 
     if not user_query:
 
-        st.session_state.voice_response_requested = False
+        st.session_state.voice_response_requested = (
+            False
+        )
+
         return
 
     # =====================================================
-    # CURRENT DOCUMENT
+    # CURRENT PDF
     # =====================================================
 
     selected_document = (
@@ -715,12 +1082,36 @@ def render_chat() -> None:
     # =====================================================
     # WEB URL
     # =====================================================
+    #
+    # IMPORTANT:
+    #
+    # selected_document is passed here.
+    #
+    # Therefore:
+    #
+    # OLD MAGICBRICKS URL
+    #       +
+    # NEW PDF
+    #
+    # becomes:
+    #
+    # web_url = ""
+    #
+    # and PDF RAG wins.
+    #
+    # =====================================================
 
     web_url = _resolve_web_url(
-        user_query
+        user_query=user_query,
+
+        selected_document=(
+            selected_document
+        ),
     )
 
-    web_context = bool(web_url)
+    web_context = bool(
+        web_url
+    )
 
     # =====================================================
     # OCR
@@ -741,16 +1132,75 @@ def render_chat() -> None:
     history = _build_history()
 
     # =====================================================
-    # REQUEST
+    # DEBUG FINAL REQUEST
+    # =====================================================
+
+    print(
+        "\n========== FINAL FRONTEND STATE =========="
+    )
+
+    print(
+        "Query:",
+        user_query,
+    )
+
+    print(
+        "Selected document:",
+        selected_document or "NONE",
+    )
+
+    print(
+        "Document context:",
+        document_context,
+    )
+
+    print(
+        "Web URL:",
+        web_url or "NONE",
+    )
+
+    print(
+        "Web context:",
+        web_context,
+    )
+
+    print(
+        "OCR:",
+        bool(ocr_text),
+    )
+
+    print(
+        "===========================================\n"
+    )
+
+    # =====================================================
+    # SEND REQUEST
     # =====================================================
 
     _send_request(
         user_query=user_query,
+
         input_type=input_type,
+
         history=history,
-        selected_document=selected_document,
-        document_context=document_context,
-        web_url=web_url,
-        web_context=web_context,
-        ocr_text=ocr_text,
+
+        selected_document=(
+            selected_document
+        ),
+
+        document_context=(
+            document_context
+        ),
+
+        web_url=(
+            web_url
+        ),
+
+        web_context=(
+            web_context
+        ),
+
+        ocr_text=(
+            ocr_text
+        ),
     )

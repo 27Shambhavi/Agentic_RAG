@@ -1,5 +1,4 @@
 from typing import Literal
-import re
 
 from langgraph.graph import (
     StateGraph,
@@ -22,615 +21,148 @@ from app.agents.nodes import (
 
 
 # =========================================================
-# URL EXTRACTION
+# VALID ROUTES
 # =========================================================
-
-def extract_url(query: str) -> str:
-
-    query = (
-        query or ""
-    ).strip()
-
-    if not query:
-        return ""
-
-    # -----------------------------------------------------
-    # MARKDOWN URL
-    #
-    # [Example](https://example.com)
-    # -----------------------------------------------------
-
-    markdown_pattern = (
-        r"\[[^\]]*\]"
-        r"\("
-        r"(https?://[^\s\)]+)"
-        r"\)"
-    )
-
-    match = re.search(
-        markdown_pattern,
-        query,
-        flags=re.IGNORECASE,
-    )
-
-    if match:
-
-        return (
-            match.group(1)
-            .strip()
-            .rstrip(
-                ".,!?;:)]}"
-            )
-        )
-
-    # -----------------------------------------------------
-    # NORMAL URL
-    # -----------------------------------------------------
-
-    url_pattern = (
-        r"https?://[^\s<>\"']+"
-    )
-
-    match = re.search(
-        url_pattern,
-        query,
-        flags=re.IGNORECASE,
-    )
-
-    if not match:
-        return ""
-
-    return (
-        match.group(0)
-        .strip()
-        .rstrip(
-            ".,!?;:)]}"
-        )
-    )
-
-
-# =========================================================
-# EXPLICIT WEB SEARCH DETECTION
-# =========================================================
-
-def is_explicit_web_request(
-    query: str,
-) -> bool:
-
-    q = (
-        query or ""
-    ).strip().lower()
-
-    if not q:
-        return False
-
-    web_patterns = (
-
-        # Explicit search
-        "search the web",
-        "search web",
-        "search the internet",
-        "search internet",
-        "search online",
-        "look it up online",
-        "look it up on the internet",
-        "find it online",
-        "google it",
-        "google this",
-        "browse the web",
-        "browse online",
-
-        # Current information
-        "latest news",
-        "latest update",
-        "latest information",
-        "today's news",
-        "today news",
-        "current news",
-        "breaking news",
-        "recent news",
-
-        "what happened today",
-        "what is happening today",
-
-        "current information",
-        "current status",
-        "current update",
-        "live information",
-    )
-
-    return any(
-        pattern in q
-        for pattern in web_patterns
-    )
-
-
-# =========================================================
-# GREETING DETECTION
-# =========================================================
+#
+# These MUST match the routes supported by supervisor.py.
 #
 # IMPORTANT:
 #
-# This prevents an active PDF from hijacking simple
-# conversational messages such as:
+# web       = normal Web Search
 #
-# hello
-# hi
-# hey
-# good morning
-# thanks
-# thank you
+# web_rag   = user-provided URL -> Web RAG
 #
-# These should remain general conversation and NOT
-# become PDF RAG merely because a document is selected.
+# They are two completely different routes.
 #
 # =========================================================
 
-def is_greeting_request(
-    query: str,
-) -> bool:
-
-    q = (
-        query or ""
-    ).strip().lower()
-
-    if not q:
-        return False
-
-    # Remove simple punctuation.
-    cleaned = re.sub(
-        r"[^\w\s']",
-        " ",
-        q,
-    )
-
-    cleaned = re.sub(
-        r"\s+",
-        " ",
-        cleaned,
-    ).strip()
-
-    greeting_phrases = {
-        "hi",
-        "hello",
-        "hey",
-        "hii",
-        "hiii",
-        "helo",
-        "helloo",
-        "hellooo",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "good night",
-        "thanks",
-        "thank you",
-        "thankyou",
-        "thx",
-        "ty",
-        "bye",
-        "goodbye",
-    }
-
-    if cleaned in greeting_phrases:
-        return True
-
-    return False
-
-
-# =========================================================
-# ROUTER
-# =========================================================
-
-def route_after_supervisor(
-    state: AgentState,
-) -> Literal[
-    "greeting",
+VALID_ROUTES = {
     "rag",
     "web_rag",
     "web",
     "weather",
     "ocr",
+    "greeting",
+    "general",
+}
+
+
+# =========================================================
+# ROUTE AFTER SUPERVISOR
+# =========================================================
+#
+# IMPORTANT:
+#
+# The supervisor decides the route.
+#
+# graph.py ONLY executes that route.
+#
+# graph.py MUST NOT:
+#
+# - inspect URLs
+# - run another classifier
+# - convert web_rag -> web
+# - inspect documents
+# - inspect greetings
+# - inspect weather
+#
+# =========================================================
+
+def route_after_supervisor(
+    state: AgentState,
+) -> Literal[
+    "rag",
+    "web_rag",
+    "web",
+    "weather",
+    "ocr",
+    "greeting",
     "general",
 ]:
 
-    # =====================================================
-    # QUERY
-    # =====================================================
-
-    query = (
-        state.get(
-            "query",
-            "",
-        )
-        or ""
-    ).strip()
-
-    # =====================================================
-    # SELECTED DOCUMENT
-    # =====================================================
-
-    selected_document = (
-        state.get(
-            "selected_document",
-            "",
-        )
-        or ""
-    ).strip()
-
-    # =====================================================
-    # DOCUMENT CONTEXT
-    # =====================================================
-
-    document_context = bool(
-        state.get(
-            "document_context",
-            False,
-        )
-    )
-
-    # =====================================================
-    # SUPERVISOR ROUTE
-    # =====================================================
-
-    supervisor_route = (
+    route = (
         state.get(
             "route",
             "general",
         )
         or "general"
-    ).strip().lower()
+    )
 
-    # =====================================================
-    # WEB URL FROM STATE
-    # =====================================================
-
-    web_url = (
-        state.get(
-            "web_url",
-            "",
-        )
-        or ""
-    ).strip()
-
-    # =====================================================
-    # NORMALIZE URL FROM STATE
-    # =====================================================
-
-    if web_url:
-
-        normalized_url = extract_url(
-            web_url
-        )
-
-        if normalized_url:
-
-            web_url = normalized_url
-
-    # =====================================================
-    # DETECT URL FROM USER QUERY
-    # =====================================================
-
-    if not web_url:
-
-        web_url = extract_url(
-            query
-        )
-
-    # =====================================================
-    # EXPLICIT WEB SEARCH
-    # =====================================================
-
-    explicit_web = is_explicit_web_request(
-        query
+    route = (
+        str(route)
+        .strip()
+        .lower()
+        .replace("`", "")
+        .replace('"', "")
+        .replace("'", "")
     )
 
     # =====================================================
-    # DIRECT GREETING DETECTION
+    # BACKWARD COMPATIBILITY
+    # =====================================================
+    #
+    # These are only old aliases.
+    #
+    # CRITICAL:
+    #
+    # web_rag MUST NOT be converted to web.
+    #
+    # web_rag is now a real execution route.
+    #
     # =====================================================
 
-    direct_greeting = is_greeting_request(
-        query
-    )
+    if route == "document_rag":
+
+        route = "rag"
+
+    elif route == "document":
+
+        route = "rag"
+
+    elif route == "knowledge":
+
+        route = "rag"
+
+    # =====================================================
+    # VALIDATE
+    # =====================================================
+
+    if route not in VALID_ROUTES:
+
+        print(
+            "[GRAPH] Invalid supervisor route:",
+            route,
+        )
+
+        route = "general"
 
     # =====================================================
     # DEBUG
     # =====================================================
 
     print(
-        "\n================ GRAPH ROUTER ================"
+        "\n================ GRAPH ================"
     )
 
     print(
-        "Query:",
-        query,
+        "Supervisor selected:",
+        route,
     )
 
     print(
-        "Selected document:",
-        selected_document or "NONE",
+        "Executing node:",
+        route,
     )
 
     print(
-        "Document context:",
-        document_context,
+        "=======================================\n"
     )
 
-    print(
-        "Detected URL:",
-        web_url or "NONE",
-    )
-
-    print(
-        "Explicit web request:",
-        explicit_web,
-    )
-
-    print(
-        "Direct greeting:",
-        direct_greeting,
-    )
-
-    print(
-        "Supervisor route:",
-        supervisor_route,
-    )
-
-    # =====================================================
-    # PRIORITY 1 — USER PROVIDED URL
-    # =====================================================
-    #
-    # URL ALWAYS means WEB RAG.
-    #
-    # This has the highest priority because an explicit
-    # webpage supplied by the user is a strong signal.
-    #
-    # PDF selection does NOT override a URL.
-    #
-    # Example:
-    #
-    # PDF selected
-    # +
-    # What is redBus?
-    # https://www.redbus.in/
-    #
-    # -> WEB RAG
-    #
-    # =====================================================
-
-    if web_url:
-
-        print(
-            "[GRAPH] URL detected."
-        )
-
-        print(
-            "[GRAPH] Route -> WEB RAG"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "web_rag"
-
-    # =====================================================
-    # PRIORITY 2 — EXPLICIT WEB SEARCH
-    # =====================================================
-    #
-    # Example:
-    #
-    # PDF selected
-    #
-    # "Search the web for latest AI news"
-    #
-    # -> WEB
-    #
-    # =====================================================
-
-    if explicit_web:
-
-        print(
-            "[GRAPH] Explicit web search request."
-        )
-
-        print(
-            "[GRAPH] Route -> WEB"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "web"
-
-    # =====================================================
-    # PRIORITY 3 — OCR
-    # =====================================================
-
-    if supervisor_route == "ocr":
-
-        print(
-            "[GRAPH] Route -> OCR"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "ocr"
-
-    # =====================================================
-    # PRIORITY 4 — WEATHER
-    # =====================================================
-
-    if supervisor_route == "weather":
-
-        print(
-            "[GRAPH] Route -> WEATHER"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "weather"
-
-    # =====================================================
-    # PRIORITY 5 — GREETING
-    # =====================================================
-    #
-    # IMPORTANT:
-    #
-    # GREETING MUST COME BEFORE ACTIVE PDF.
-    #
-    # Otherwise:
-    #
-    # PDF selected
-    # +
-    # "hello"
-    #
-    # would incorrectly become:
-    #
-    # hello -> PDF RAG
-    #
-    # =====================================================
-
-    if (
-        direct_greeting
-        or supervisor_route == "greeting"
-    ):
-
-        print(
-            "[GRAPH] Greeting detected."
-        )
-
-        print(
-            "[GRAPH] Route -> GREETING"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "greeting"
-
-    # =====================================================
-    # PRIORITY 6 — ACTIVE PDF
-    # =====================================================
-    #
-    # NOW the PDF gets its priority.
-    #
-    # This means:
-    #
-    # PDF selected
-    # +
-    # normal document question
-    #
-    # -> RAG
-    #
-    # But:
-    #
-    # hello
-    # -> greeting
-    #
-    # URL
-    # -> web_rag
-    #
-    # explicit web search
-    # -> web
-    #
-    # =====================================================
-
-    if (
-        selected_document
-        and document_context
-    ):
-
-        print(
-            "[GRAPH] Active PDF detected."
-        )
-
-        print(
-            "[GRAPH] Normal question -> RAG"
-        )
-
-        print(
-            "[GRAPH] Supervisor route:",
-            supervisor_route,
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "rag"
-
-    # =====================================================
-    # PRIORITY 7 — SUPERVISOR RAG
-    # =====================================================
-
-    if supervisor_route == "rag":
-
-        print(
-            "[GRAPH] Route -> RAG"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "rag"
-
-    # =====================================================
-    # PRIORITY 8 — SUPERVISOR WEB
-    # =====================================================
-
-    if supervisor_route == "web":
-
-        print(
-            "[GRAPH] Route -> WEB"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "web"
-
-    # =====================================================
-    # PRIORITY 9 — SUPERVISOR GENERAL
-    # =====================================================
-
-    if supervisor_route == "general":
-
-        print(
-            "[GRAPH] Route -> GENERAL"
-        )
-
-        print(
-            "================================================\n"
-        )
-
-        return "general"
-
-    # =====================================================
-    # FALLBACK
-    # =====================================================
-
-    print(
-        "[GRAPH] Unknown route -> GENERAL"
-    )
-
-    print(
-        "================================================\n"
-    )
-
-    return "general"
+    return route
 
 
 # =========================================================
-# CREATE GRAPH
+# GRAPH
 # =========================================================
 
 builder = StateGraph(
@@ -652,35 +184,100 @@ builder.add_node(
 # EXECUTION NODES
 # =========================================================
 
-builder.add_node(
-    "greeting",
-    greeting_node,
-)
+# ---------------------------------------------------------
+# PDF RAG
+# ---------------------------------------------------------
 
 builder.add_node(
     "rag",
     rag_node,
 )
 
-builder.add_node(
-    "web_rag",
-    web_rag_node,
-)
+
+# ---------------------------------------------------------
+# NORMAL WEB SEARCH
+# ---------------------------------------------------------
+#
+# User asks:
+#
+# "latest AI news"
+# "search the web for..."
+#
+# -> web
+#
+# ---------------------------------------------------------
 
 builder.add_node(
     "web",
     web_node,
 )
 
+
+# ---------------------------------------------------------
+# WEB RAG
+# ---------------------------------------------------------
+#
+# User provides:
+#
+# https://www.example.com
+#
+# -> web_rag
+#
+# URL
+#   ↓
+# scrape
+#   ↓
+# clean
+#   ↓
+# chunk
+#   ↓
+# embed
+#   ↓
+# retrieve
+#   ↓
+# LLM
+#
+# ---------------------------------------------------------
+
+builder.add_node(
+    "web_rag",
+    web_rag_node,
+)
+
+
+# ---------------------------------------------------------
+# WEATHER
+# ---------------------------------------------------------
+
 builder.add_node(
     "weather",
     weather_node,
 )
 
+
+# ---------------------------------------------------------
+# OCR
+# ---------------------------------------------------------
+
 builder.add_node(
     "ocr",
     ocr_node,
 )
+
+
+# ---------------------------------------------------------
+# GREETING
+# ---------------------------------------------------------
+
+builder.add_node(
+    "greeting",
+    greeting_node,
+)
+
+
+# ---------------------------------------------------------
+# GENERAL AI
+# ---------------------------------------------------------
 
 builder.add_node(
     "general",
@@ -699,57 +296,85 @@ builder.add_edge(
 
 
 # =========================================================
-# SUPERVISOR -> EXECUTION
+# SUPERVISOR → EXECUTION
+# =========================================================
+#
+# IMPORTANT:
+#
+# Every supervisor route has its own execution node.
+#
+# In particular:
+#
+#     web_rag -> web_rag
+#
+# NOT:
+#
+#     web_rag -> web
+#
 # =========================================================
 
 builder.add_conditional_edges(
     "supervisor",
+
     route_after_supervisor,
+
     {
-        "greeting": "greeting",
         "rag": "rag",
+
         "web_rag": "web_rag",
+
         "web": "web",
+
         "weather": "weather",
+
         "ocr": "ocr",
+
+        "greeting": "greeting",
+
         "general": "general",
     },
 )
 
 
 # =========================================================
-# EXECUTION -> END
+# EXECUTION → END
 # =========================================================
-
-builder.add_edge(
-    "greeting",
-    END,
-)
 
 builder.add_edge(
     "rag",
     END,
 )
 
+
 builder.add_edge(
     "web_rag",
     END,
 )
+
 
 builder.add_edge(
     "web",
     END,
 )
 
+
 builder.add_edge(
     "weather",
     END,
 )
 
+
 builder.add_edge(
     "ocr",
     END,
 )
+
+
+builder.add_edge(
+    "greeting",
+    END,
+)
+
 
 builder.add_edge(
     "general",
