@@ -1,6 +1,30 @@
 # 🤖 Agentic RAG Space — Multimodal AI Knowledge Assistant
 
 > An **Agentic Retrieval-Augmented Generation (RAG) system** that intelligently routes user queries across document RAG, Web RAG, general AI, OCR, voice, weather, and conversational capabilities.
+> ## 📖 Project Story
+
+This project started as a simple PDF-based RAG assistant and evolved into
+an Agentic RAG system capable of intelligently deciding where an answer
+should come from.
+
+The system can search across the complete knowledge base instead of being
+restricted to the currently selected document. If relevant information is
+found in an uploaded document, the answer is generated from that document.
+If the knowledge base does not contain the answer, the system can fall back
+to web search.
+
+It also supports Web RAG: when a user provides a URL, the webpage is scraped,
+chunked, embedded, and stored in the vector database. Follow-up questions
+about that webpage can then retrieve the relevant stored chunks instead of
+re-scraping or performing unrelated web searches.
+
+The final architecture uses an Agentic routing layer to switch between
+Document RAG, Web RAG, Web Search, General AI, OCR, and Weather based on
+the user's query and available context.
+
+The main goal was to build a RAG system that is not locked to one document
+or one retrieval path, but can dynamically choose the most relevant
+knowledge source while maintaining conversational context.
 
 ---
 
