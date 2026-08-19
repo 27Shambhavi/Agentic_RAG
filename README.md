@@ -28,172 +28,434 @@ knowledge source while maintaining conversational context.
 
 ---
 
-## 🌟 Overview
+🌟 Overview
 
-**Agentic RAG Space** is a modular AI assistant designed to go beyond a traditional chatbot.
+Agentic RAG Space is a modular AI assistant built to explore how modern AI applications work beyond simply sending every question to an LLM.
 
-Instead of sending every question through the same pipeline, the system uses an **agentic routing architecture built with LangGraph**. A supervisor analyzes the user's intent and routes the request to the most appropriate capability.
+The system uses LangGraph-based agentic orchestration to analyze the user's request and select the appropriate execution path.
 
-The system can work with:
+The assistant supports:
 
-- 📄 Uploaded PDF documents
-- 🌐 Arbitrary webpages/URLs
-- 🖼️ Images and OCR
-- 🎙️ Voice input
-- 🔊 Voice responses
-- 💬 Conversational history
-- 🤖 General AI questions
-- 🌤️ Weather-related queries
-- 🔎 Retrieved sources and metadata
+📄 Multi-document PDF RAG
+🌐 URL-based Web RAG
+🔎 Live Web Search
+🖼️ OCR-based image questions
+🎙️ Speech-to-Text
+🔊 Text-to-Speech
+💬 Conversation history
+🤖 General AI conversations
+🌤️ Weather queries
+📚 Source attribution
+🧠 Semantic vector retrieval
+⚡ FastAPI backend
+🎨 Streamlit frontend
 
-The goal is to combine **RAG, agentic orchestration, multimodal interaction, and production-style API architecture** into a single extensible AI assistant.
+The core design principle is:
 
----
+                 USER QUERY
+                      │
+                      ▼
+                🧠 SUPERVISOR
+                      │
+          ┌───────────┼────────────┐
+          │           │            │
+          ▼           ▼            ▼
+       KNOWLEDGE    WEB RAG      WEB SEARCH
+          │           │            │
+          ▼           ▼            ▼
+       Pinecone    URL Data      Internet
+          │           │
+          └─────┬─────┘
+                ▼
+             Gemini
+                │
+                ▼
+          Final Response
+✨ Key Features
+Feature	Description
+🧠 Agentic Routing	LangGraph supervisor determines the appropriate execution path
+📚 Multi-Document RAG	Searches across the complete knowledge base instead of being restricted to the selected PDF
+📄 PDF RAG	Upload and query PDF documents
+🌐 Web RAG	Provide a URL and ask questions about that webpage
+💾 Persistent Web Knowledge	Webpage content is chunked, embedded and stored in Pinecone
+🔎 Live Web Search	Searches the internet when knowledge-base information is insufficient or a current answer is requested
+🔗 URL Context Memory	Follow-up questions can continue using the previously supplied webpage
+🧮 Semantic Search	Embedding-based similarity retrieval
+🤖 Gemini LLM	Context-grounded answer generation
+🖼️ OCR	Ask questions about extracted image text
+🎙️ Speech-to-Text	Faster-Whisper voice transcription
+🔊 Text-to-Speech	pyttsx3 voice responses
+💬 Conversation History	Supports contextual follow-up questions
+📚 Source Attribution	Returns document/web sources
+⚡ FastAPI	REST API backend
+🎨 Streamlit	Interactive frontend
+🛡️ Error Handling	Validation and graceful fallback across major components
+🧠 The Core Problem I Solved
 
-# ✨ Key Features
+One of the major challenges during development was routing and context management.
 
-| Feature | Description |
-|---|---|
-| 🧠 **Agentic Routing** | LangGraph-based supervisor routes requests to the appropriate agent |
-| 📄 **Document RAG** | Ask questions about uploaded PDF documents |
-| 🌐 **Dynamic Web RAG** | Provide a URL and retrieve information from the webpage |
-| 🔎 **Semantic Retrieval** | Uses embeddings and Pinecone for vector similarity search |
-| 🤖 **Gemini LLM** | Generates context-aware responses |
-| 🖼️ **OCR** | Extract and query text from images |
-| 🎙️ **Speech-to-Text** | Converts recorded voice into text using Faster-Whisper |
-| 🔊 **Text-to-Speech** | Converts assistant responses into audio using pyttsx3 |
-| 💬 **Conversation History** | Maintains recent conversational context |
-| 📚 **Source Tracking** | Displays retrieved document/web sources |
-| 🧩 **Modular Architecture** | Separate frontend, API, agents, RAG and speech layers |
-| ⚡ **FastAPI Backend** | REST API layer for the AI system |
-| 🎨 **Streamlit Frontend** | Interactive user interface |
-| 🛡️ **Fallback Web Extraction** | Requests → Playwright → generic reader fallback |
+Initially, selecting a document could unintentionally make that document the only searchable source.
 
----
+For example:
 
-# 🏗️ High-Level Architecture
+Selected:
+Ayushman-Bharat.pdf
 
-```text
-                         ┌──────────────────────────┐
-                         │      STREAMLIT UI         │
-                         │        FRONTEND           │
-                         └────────────┬─────────────┘
-                                      │
-                     ┌────────────────┴────────────────┐
-                     │                                 │
-                   TEXT                              VOICE
-                     │                                 │
-                     │                          Faster-Whisper
-                     │                                 │
-                     └────────────────┬────────────────┘
-                                      │
-                                      ▼
-                         ┌──────────────────────────┐
-                         │        FASTAPI            │
-                         │         BACKEND           │
-                         └────────────┬─────────────┘
-                                      │
-                                      ▼
-                         ┌──────────────────────────┐
-                         │       LANGGRAPH            │
-                         │      AGENTIC GRAPH         │
-                         └────────────┬─────────────┘
-                                      │
-                                      ▼
-                              ┌──────────────┐
-                              │  SUPERVISOR  │
-                              │   / ROUTER   │
-                              └───────┬──────┘
-                                      │
-             ┌────────────────────────┼────────────────────────┐
-             │                        │                        │
-             ▼                        ▼                        ▼
-      ┌─────────────┐          ┌─────────────┐          ┌─────────────┐
-      │ Document RAG│          │   Web RAG   │          │ General AI  │
-      └──────┬──────┘          └──────┬──────┘          └─────────────┘
-             │                        │
-             ▼                        ▼
-        PDF Loader              URL Extraction
-             │                        │
-             ▼                 ┌──────┼────────┐
-        Chunking               │      │        │
-             │             Requests Playwright Reader
-             │                 │      │        │
-             │                 └──────┼────────┘
-             │                        ▼
-             │                    Chunking
-             │                        │
-             └────────────┬───────────┘
-                          ▼
-                    ┌────────────┐
-                    │ Embeddings │
-                    └─────┬──────┘
-                          ▼
-                    ┌────────────┐
-                    │  Pinecone  │
-                    │ Vector DB   │
-                    └─────┬──────┘
-                          │
-                          ▼
-                  Relevant Context
-                          │
-                          ▼
-                    ┌──────────┐
-                    │  Gemini  │
-                    │   LLM    │
-                    └────┬─────┘
-                         │
-                         ▼
-                  Final Response
-                         │
-             ┌───────────┴───────────┐
-             ▼                       ▼
-          Text UI                pyttsx3
-                                     │
-                                     ▼
-                                  🔊 Audio
-🧠 Agentic RAG Architecture
 
-The central design principle is route first, answer second.
+Question:
+"What is the name of the bank?"
 
-The supervisor does not directly answer the user. It determines which capability should process the request.
+Even if the answer existed inside:
 
-User Query
-    │
-    ▼
-Supervisor
-    │
-    ├── Greeting ───────► Greeting Node
-    │
-    ├── General ────────► General AI Node
-    │
-    ├── Document ───────► Document RAG Node
-    │
-    ├── Web ────────────► Web RAG Node
-    │
-    ├── OCR ────────────► OCR Node
-    │
-    └── Weather ────────► Weather Node
+Dummy-Bank-Statement.pdf
 
-This allows the application to be extended with additional agents without rewriting the complete system.
+the system could incorrectly restrict retrieval to the selected PDF.
 
-🔀 Query Routing
+❌ Old Behavior
+Selected PDF
+     ↓
+Search ONLY selected PDF
+     ↓
+No answer
+     ↓
+Wrong fallback / wrong route
+✅ Final Behavior
+User Question
+      ↓
+Knowledge Base Search
+      ↓
+Search across indexed documents
+      ↓
+Relevant document found?
+      │
+   ┌──┴──┐
+   │     │
+  YES    NO
+   │     │
+   ▼     ▼
+ Answer  Web Search
 
-Examples of how requests are handled:
+Therefore:
 
-User Request	Route
-Hi, how are you?	👋 Greeting
-Explain machine learning	🤖 General AI
-What does my uploaded PDF say about leave policy?	📄 Document RAG
-https://example.com — summarize this	🌐 Web RAG
-What is this image saying?	🖼️ OCR
-What's the weather today?	🌤️ Weather
-Voice question about a PDF	🎙️ → 📄 Document RAG
-Voice question about a webpage	🎙️ → 🌐 Web RAG
-📄 Document RAG
+The selected document is a UI/context preference, not a hard boundary on the entire knowledge base.
 
-The document pipeline follows a standard retrieval-augmented generation architecture.
+This allows the assistant to switch naturally between documents.
 
+🔀 Intelligent Query Routing
+
+The system separates knowledge retrieval, Web RAG, and live web search.
+
+📚 Knowledge Base RAG
+
+Used when the answer may exist in the indexed knowledge base.
+
+Question
+   ↓
+Knowledge RAG
+   ↓
+Pinecone
+   ↓
+Relevant document/chunks
+   ↓
+Gemini
+   ↓
+Answer
+
+The search is not limited to the currently selected PDF.
+
+🌐 Web RAG
+
+Used when the user explicitly provides a URL.
+
+User URL
+   ↓
+Web Extraction
+   ↓
+Cleaning
+   ↓
+Chunking
+   ↓
+Embeddings
+   ↓
+Pinecone
+   ↓
+Webpage Context
+   ↓
+Gemini
+   ↓
+Answer
+
+The URL becomes part of the application's web context so follow-up questions can continue referring to it.
+
+Example:
+
+User:
+https://example.com
+
+
+Assistant:
+[Analyzes webpage]
+
+
+User:
+What are the main services?
+
+
+Assistant:
+[Uses the webpage context]
+🔎 Live Web Search
+
+Used for requests requiring current information or when the knowledge base cannot answer.
+
+Example:
+
+"Latest AI news today"
+
+Flow:
+
+Question
+   ↓
+Web Search
+   ↓
+Search Results
+   ↓
+Gemini
+   ↓
+Answer + Sources
+🧩 Final Routing Architecture
+                         ┌─────────────────┐
+                         │    USER QUERY   │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │    SUPERVISOR   │
+                         │     ROUTER      │
+                         └────────┬────────┘
+                                  │
+       ┌──────────────────────────┼─────────────────────────┐
+       │                          │                         │
+       ▼                          ▼                         ▼
+  URL PROVIDED              NORMAL QUERY              SPECIAL QUERY
+       │                          │                         │
+       ▼                          ▼                         ├── OCR
+   WEB RAG                  KNOWLEDGE RAG                  ├── Weather
+                                  │                         ├── Greeting
+                                  ▼                         └── General
+                           Pinecone Search
+                                  │
+                         ┌────────┴────────┐
+                         │                 │
+                    Relevant            Not Relevant
+                         │                 │
+                         ▼                 ▼
+                     Gemini           Web Search
+                         │                 │
+                         └────────┬────────┘
+                                  ▼
+                           Final Response
+🧠 Intent Classification
+
+The classifier is responsible for understanding the user's intent, rather than blindly matching individual keywords.
+
+The important distinction is:
+
+❌ Keyword Detection
+
+
+"weather" → weather route
+
+versus:
+
+✅ Intent Understanding
+
+
+"What does the document say about weather-related
+leave cancellation?"
+
+
+→ Document RAG
+
+The final system considers:
+
+Current query
+Conversation history
+Active URL context
+OCR context
+Document availability
+Explicit web-search requests
+User-provided URLs
+
+This prevents one piece of stale context from permanently locking the assistant into a route.
+
+📚 Multi-Document RAG
+
+The knowledge base can contain multiple documents.
+
+Example:
+
+data/documents/
+
+
+├── Ayushman-Bharat.pdf
+├── Dummy-Bank-Statement.pdf
+├── employee_handbook.pdf
+└── leave_policy.pdf
+
+All documents can be indexed into Pinecone.
+
+Retrieval
+User Question
+      ↓
+Query Embedding
+      ↓
+Pinecone
+      ↓
+Search Knowledge Base
+      ↓
+Relevant Chunks
+      ↓
+Relevance Check
+      ↓
+Gemini
+      ↓
+Grounded Answer
+Example
+Selected Document:
+Ayushman-Bharat.pdf
+
+
+Question:
+"What is the name of the bank?"
+
+The system can still retrieve:
+
+Dummy-Bank-Statement.pdf
+
+if that document contains the relevant information.
+
+This makes the system a true multi-document knowledge assistant rather than a single-document chatbot.
+
+🌐 Persistent Web RAG
+
+A major feature of the project is the ability to turn a user-provided webpage into searchable knowledge.
+
+Web ingestion
+                 USER URL
+                    │
+                    ▼
+             URL Validation
+                    │
+                    ▼
+            Web Extraction
+                    │
+       ┌────────────┼─────────────┐
+       ▼            ▼             ▼
+   Requests     Playwright     Reader
+       │            │             │
+       └────────────┼─────────────┘
+                    ▼
+              Clean Content
+                    │
+                    ▼
+                 Chunking
+                    │
+                    ▼
+                Embeddings
+                    │
+                    ▼
+                 Pinecone
+                    │
+                    ▼
+             Persistent Index
+
+Webpage metadata can include:
+
+type
+source
+url
+title
+document_id
+chunk_index
+extraction_method
+text
+
+This means the webpage isn't merely scraped once and forgotten.
+
+It becomes searchable vector knowledge.
+
+🔗 Web RAG Follow-Up Context
+
+After a user provides a URL:
+
+URL
+ ↓
+Scrape
+ ↓
+Index
+ ↓
+Pinecone
+
+the system can retain the URL context.
+
+Example:
+
+User:
+https://example.com
+
+
+Assistant:
+This webpage describes ...
+
+
+User:
+Who are the main users?
+
+
+Assistant:
+[Retrieves relevant chunks from the stored webpage]
+
+This gives the application conversational Web RAG rather than a one-shot URL summarizer.
+
+🔎 Knowledge RAG → Web Fallback
+
+Another important design decision is that RAG failure does not mean the entire system is broken.
+
+If a normal knowledge-base query cannot find relevant information:
+
+User Question
+      ↓
+Knowledge RAG
+      ↓
+Relevant chunks?
+   ┌──┴──┐
+  YES    NO
+   │      │
+   ▼      ▼
+ Answer  Web Search
+
+For example:
+
+User:
+"What happened in today's AI news?"
+
+The system should not search an old PDF.
+
+It should use:
+
+Live Web Search
+
+Similarly, if:
+
+Question
+ ↓
+Knowledge Base
+ ↓
+No relevant answer
+
+the system can fall back to web search when appropriate.
+
+📄 Document RAG Pipeline
 PDF Upload
     │
     ▼
@@ -206,22 +468,22 @@ Text Extraction
 Chunking
     │
     ▼
-Embeddings
+Embedding Generation
     │
     ▼
 Pinecone
     │
     ▼
-User Query
+User Question
     │
     ▼
 Query Embedding
     │
     ▼
-Similarity Search
+Semantic Retrieval
     │
     ▼
-Relevant Chunks
+Relevant Context
     │
     ▼
 Gemini
@@ -229,138 +491,21 @@ Gemini
     ▼
 Answer + Sources
 Document RAG capabilities
-PDF upload
-Document indexing
-Text extraction
-Chunking
-Embedding generation
-Pinecone vector storage
-Semantic retrieval
-Context construction
-LLM generation
-Source tracking
-🌐 Dynamic Web RAG
+📄 PDF upload
+📑 Text extraction
+✂️ Chunking
+🧮 Embeddings
+🗄️ Vector storage
+🔎 Semantic retrieval
+🧠 Context construction
+🤖 LLM generation
+📚 Source tracking
+🔎 Pinecone Vector Database
 
-One of the major components of the project is URL-based RAG.
+The project uses Pinecone for vector storage and semantic retrieval.
 
-The user can provide a webpage URL and ask questions about the content.
+Conceptually:
 
-User URL
-   │
-   ▼
-URL Validation
-   │
-   ▼
-URL Normalization
-   │
-   ▼
-Web Extraction
-   │
-   ├── Requests + BeautifulSoup
-   │
-   ├── If unsuccessful
-   │        ▼
-   │    Playwright
-   │
-   └── If unsuccessful
-            ▼
-       Generic Reader
-            │
-            ▼
-       Clean Content
-            │
-            ▼
-         Chunking
-            │
-            ▼
-        Embeddings
-            │
-            ▼
-         Pinecone
-            │
-            ▼
-     Semantic Retrieval
-            │
-            ▼
-          Gemini
-            │
-            ▼
-       Answer + Sources
-🔧 Web Extraction Strategy
-
-The system is designed to be URL-agnostic, rather than being customized for individual websites.
-
-1. Requests + BeautifulSoup
-
-Used as the first extraction method because it is lightweight and fast.
-
-2. Playwright
-
-Used for webpages that require JavaScript rendering or dynamically generated content.
-
-Additional browser handling includes:
-
-JavaScript execution
-Browser context configuration
-User-agent configuration
-Network-idle waiting
-Cookie/consent handling attempts
-Lazy-loading support through scrolling
-Rendered body extraction
-HTML fallback
-3. Generic Reader Fallback
-
-If direct HTTP extraction and browser rendering fail, the system attempts a generic reader-based extraction method.
-
-This avoids hard-coding logic for specific websites.
-
-Important: No scraper can guarantee access to every website. Pages protected by authentication, CAPTCHA, aggressive anti-bot systems, restricted APIs, or highly interactive client-side applications may still be inaccessible.
-
-🔎 Web RAG Retrieval
-
-Web content is indexed with metadata such as:
-
-type
-source
-url
-title
-document_id
-method
-page
-chunk_index
-text
-
-The retrieval process can restrict results to the current webpage URL.
-
-User Question
-      │
-      ▼
-Query Embedding
-      │
-      ▼
-Pinecone
-      │
-      ├── URL Metadata Filter
-      │
-      ▼
-Top-K Relevant Chunks
-      │
-      ▼
-Relevance Check
-      │
-      ▼
-Gemini
-      │
-      ▼
-Final Answer
-
-The LLM is instructed to answer from the retrieved webpage context instead of relying on unrelated outside knowledge.
-
-🧮 Vector Database
-
-The project uses Pinecone as the vector database.
-
-Stored information
 Vector
    +
 Metadata
@@ -368,44 +513,92 @@ Metadata
 Metadata can include:
 
 source
-URL
-document ID
+document_id
+url
 title
 page
-chunk index
-extraction method
-original text
+chunk_index
+extraction_method
+text
 
-This allows the application to perform semantic retrieval while retaining source information for the frontend.
+This enables the system to:
 
-🤖 LLM Layer
+Search semantically
+Identify the original document
+Identify webpage sources
+Track pages/chunks
+Return citations/source information
+Filter web knowledge by URL when required
+🤖 Gemini LLM
 
-The project uses Google Gemini for response generation.
+Google Gemini is used as the primary generation model.
 
-Gemini is used after retrieval rather than blindly answering every RAG question from general model knowledge.
-
-For RAG requests:
+The LLM receives:
 
 User Query
-     +
+      +
 Retrieved Context
-     +
+      +
 Conversation History
-     ↓
-   Gemini
-     ↓
+      ↓
+    Gemini
+      ↓
 Grounded Response
 
-The prompts also contain restrictions designed to reduce unsupported answers.
+For RAG responses, prompts instruct the model to use the retrieved context and avoid inventing unsupported information.
 
-🎙️ Voice Assistant
+🌐 Web Extraction Strategy
 
-The application supports a complete voice interaction pipeline.
+The Web RAG system is designed to be URL-agnostic rather than being hard-coded for individual websites.
 
-Speech → Text
-🎤 User Speaks
+1️⃣ Requests + BeautifulSoup
+
+First extraction method.
+
+Advantages:
+
+Lightweight
+Fast
+Suitable for static HTML
+2️⃣ Playwright
+
+Used when webpages require browser rendering.
+
+Can handle:
+
+JavaScript execution
+Dynamic content
+Browser contexts
+User-agent configuration
+Network waiting
+Cookie/consent attempts
+Lazy-loaded content
+Rendered HTML
+3️⃣ Generic Reader Fallback
+
+If normal HTTP extraction and browser extraction fail, the system can attempt a generic reader-based extraction.
+
+Important limitation
+
+No scraper can guarantee access to every website.
+
+Potential blockers include:
+
+Authentication
+CAPTCHA
+Anti-bot systems
+Robots/access restrictions
+Region restrictions
+Highly dynamic applications
+Complex user interactions
+API-only content
+🎙️ Voice Pipeline
+
+The assistant supports voice input through Faster-Whisper.
+
+🎤 User Speech
       ↓
-Streamlit Audio Input
+Audio Input
       ↓
 FastAPI
       ↓
@@ -415,58 +608,67 @@ Faster-Whisper
       ↓
 Transcript
       ↓
-Agentic Router
+Supervisor
       ↓
 Appropriate Agent
-Technology
-Faster-Whisper
-Whisper Base model
-CPU inference
-INT8 computation
-Voice Activity Detection
-🔊 Text → Speech
+      ↓
+Answer
 
-After the assistant generates an answer:
+This means voice input follows the same routing architecture as text.
+
+For example:
+
+🎙️ Voice
+   ↓
+"What is the leave policy?"
+   ↓
+Document RAG
+
+or:
+
+🎙️ Voice
+   ↓
+"What is the latest AI news?"
+   ↓
+Web Search
+🔊 Text-to-Speech
+
+Generated answers can be converted into audio.
 
 Gemini Response
       ↓
-FastAPI /voice/speak
+FastAPI
       ↓
 pyttsx3
       ↓
-WAV File
+WAV
       ↓
 Streamlit Audio Player
       ↓
-🔊 Assistant Voice
-
-This allows voice input to participate in the same Agentic RAG pipeline as typed input.
-
-🖼️ OCR / Multimodal Processing
+🔊 Voice Response
+🖼️ OCR / Image Questions
 
 The system also supports image-based interaction.
 
-Image
-  ↓
+🖼️ Image
+   ↓
 OCR
-  ↓
+   ↓
 Extracted Text
-  ↓
+   ↓
 Agent Context
-  ↓
+   ↓
 User Question
-  ↓
-LLM
-  ↓
+   ↓
+Gemini
+   ↓
 Answer
 
-This allows users to provide information that is not originally available as typed text.
+The assistant can therefore work with information that exists inside an image rather than only typed text.
 
 💬 Conversation History
 
-The frontend maintains conversation messages through Streamlit session state.
-
-Recent conversation history is passed into the backend and agent state.
+Recent messages are maintained through Streamlit session state and passed through the backend agent state.
 
 Message 1
    ↓
@@ -476,38 +678,40 @@ Message 3
    ↓
 Current Query
    ↓
-Agent
+Supervisor
 
 This enables follow-up questions such as:
 
 User:
 What is this webpage about?
 
+
 Assistant:
 ...
+
 
 User:
 Who are its main users?
 
+
 Assistant:
 ...
-🔌 Backend API
+🔌 FastAPI Backend
 
-The backend is implemented using FastAPI.
+The backend provides REST APIs for the frontend and other clients.
 
-Main endpoints
 Endpoint	Purpose
 POST /api/chat	Main Agentic RAG request
 POST /api/voice/transcribe	Speech-to-text
 POST /api/voice/speak	Text-to-speech
 POST /api/documents/upload	Upload PDF
-GET /api/documents/	List available documents
+GET /api/documents/	List documents
 GET /api/documents/view/{filename}	View document
-POST /api/multimodal/ocr	Extract text from image
+POST /api/multimodal/ocr	Extract image text
 POST /api/multimodal/ask-image	Ask questions about image content
 🎨 Frontend
 
-The frontend is built with Streamlit and separated into reusable components.
+The frontend uses Streamlit.
 
 frontend/
 │
@@ -521,82 +725,32 @@ frontend/
 │   └── api_client.py
 │
 ├── streamlit_app.py
-│
 └── style.css
 
-The frontend communicates with the backend through a dedicated API client instead of directly implementing backend logic.
+The frontend communicates with FastAPI through a dedicated API client rather than directly implementing backend business logic.
 
-🧩 Backend Structure
-app/
+🏗️ Final Project Architecture
+Agentic_RAG/
 │
-├── agents/
-│   ├── classifier.py
-│   ├── graph.py
-│   ├── nodes.py
-│   ├── state.py
-│   └── supervisor.py
-│
-├── api/
-│   └── routes/
-│       ├── chat.py
-│       └── voice.py
-│
-├── rag/
-│   ├── document_rag.py
-│   ├── loaders.py
-│   ├── web_chunker.py
-│   ├── web_indexer.py
-│   ├── web_loader.py
-│   ├── web_playwright.py
-│   ├── web_rag.py
-│   ├── web_retriever.py
-│   └── web_scraper.py
-│
-└── speech/
-    ├── stt.py
-    └── tts.py
-
-🛠️ Technology Stack
-
-Layer	Technology
-Programming Language	Python
-Frontend	Streamlit
-Backend	FastAPI
-Agent Orchestration	LangGraph
-LLM	Google Gemini
-Vector Database	Pinecone
-Embeddings	Project embedding model
-PDF Processing	Python PDF/document loaders
-Web Requests	Requests
-HTML Parsing	BeautifulSoup
-Dynamic Web Automation	Playwright
-Speech Recognition	Faster-Whisper
-Text-to-Speech	pyttsx3
-API Validation	Pydantic
-HTTP Communication	REST / Requests
-State	LangGraph State + Streamlit Session State
-Styling	CSS
-Version Control	Git / GitHub
-📁 Project Structure
-Rag_Agentic_space/
-│
-├── app/
+├── 📁 app/
 │   │
-│   ├── agents/
+│   ├── 📁 agents/
 │   │   ├── classifier.py
 │   │   ├── graph.py
 │   │   ├── nodes.py
 │   │   ├── state.py
 │   │   └── supervisor.py
 │   │
-│   ├── api/
-│   │   └── routes/
+│   ├── 📁 api/
+│   │   └── 📁 routes/
 │   │       ├── chat.py
 │   │       └── voice.py
 │   │
-│   ├── rag/
+│   ├── 📁 rag/
 │   │   ├── document_rag.py
 │   │   ├── loaders.py
+│   │   ├── pinecone_client.py
+│   │   ├── retriever.py
 │   │   ├── web_chunker.py
 │   │   ├── web_indexer.py
 │   │   ├── web_loader.py
@@ -605,47 +759,75 @@ Rag_Agentic_space/
 │   │   ├── web_retriever.py
 │   │   └── web_scraper.py
 │   │
-│   └── speech/
-│       ├── stt.py
-│       └── tts.py
-│
-├── frontend/
+│   ├── 📁 llm/
+│   │   └── gemini.py
 │   │
-│   ├── components/
+│   ├── 📁 speech/
+│   │   ├── stt.py
+│   │   └── tts.py
+│   │
+│   └── 📁 tools/
+│       ├── weather_tool.py
+│       └── web_search_tool.py
+│
+├── 📁 frontend/
+│   │
+│   ├── 📁 components/
 │   │   ├── chat.py
 │   │   ├── sidebar.py
 │   │   ├── sources.py
 │   │   └── voice_input.py
 │   │
-│   ├── utils/
+│   ├── 📁 utils/
 │   │   └── api_client.py
 │   │
 │   ├── streamlit_app.py
 │   └── style.css
 │
-├── data/
-│   ├── documents/
-│   ├── images/
-│   └── audio/
+├── 📁 data/
+│   ├── 📁 documents/
+│   ├── 📁 images/
+│   └── 📁 audio/
 │
-├── .gitignore
-├── requirements.txt
-└── README.md
+├── 📄 .env
+├── 📄 .gitignore
+├── 📄 requirements.txt
+├── 📄 README.md
+└── 📄 ...
 
-Runtime-generated files such as audio recordings, local documents, images, environment files and other sensitive/generated data should be excluded from version control where appropriate.
+🔐 .env, generated audio, temporary files and other sensitive/runtime-generated data should remain excluded from Git.
 
+🛠️ Technology Stack
+Layer	Technology
+🐍 Language	Python
+🎨 Frontend	Streamlit
+⚡ Backend	FastAPI
+🧠 Agent Orchestration	LangGraph
+🤖 LLM	Google Gemini
+🗄️ Vector Database	Pinecone
+🔎 Retrieval	Semantic Vector Search
+📄 Document Processing	Python PDF/document loaders
+🌐 HTTP	Requests
+🧹 HTML Parsing	BeautifulSoup
+🌐 Browser Automation	Playwright
+🎙️ Speech Recognition	Faster-Whisper
+🔊 TTS	pyttsx3
+📦 Validation	Pydantic
+💬 State	LangGraph + Streamlit Session State
+🎨 Styling	CSS
+🔧 Version Control	Git / GitHub
 🚀 Getting Started
-1. Clone the Repository
-git clone <YOUR_GITHUB_REPOSITORY_URL>
-cd Rag_Agentic_space
-2. Create a Virtual Environment
+1️⃣ Clone the repository
+git clone https://github.com/27Shambhavi/Agentic_RAG.git
+cd Agentic_RAG
+2️⃣ Create virtual environment
 Windows
 python -m venv .venv
 .venv\Scripts\activate
 Linux / macOS
 python3 -m venv .venv
 source .venv/bin/activate
-3. Install Dependencies
+3️⃣ Install dependencies
 pip install -r requirements.txt
 
 If Playwright is required:
@@ -653,7 +835,11 @@ If Playwright is required:
 playwright install chromium
 🔐 Environment Variables
 
-Create a .env file in the project root.
+Create:
+
+.env
+
+in the project root.
 
 Example:
 
@@ -661,75 +847,84 @@ GEMINI_API_KEY=your_gemini_api_key
 PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_INDEX_NAME=your_pinecone_index
 
-Do not commit .env to GitHub.
+Never commit API keys.
 
-Make sure .gitignore contains:
+Your .gitignore should contain:
 
 .env
 .env.*
+.venv/
+__pycache__/
+*.pyc
+
+
+data/audio/
+data/images/
+
+
+.streamlit/
 ▶️ Running the Application
 Start FastAPI
 uvicorn app.main:app --reload
 
-The backend will typically run at:
+Backend:
 
 http://127.0.0.1:8000
 Start Streamlit
 
-In another terminal:
+Open another terminal:
 
 streamlit run frontend/streamlit_app.py
 
-The Streamlit interface will then be available through the local Streamlit URL shown in the terminal.
+Then open the Streamlit URL shown in the terminal.
 
-🧪 Example Usage
-📄 Document RAG
-Upload:
-employee_handbook.pdf
+🧪 Example Workflows
+📄 Example 1 — Multi-Document RAG
 
-Ask:
-"What is the leave policy?"
+Suppose the knowledge base contains:
 
-The system:
+Ayushman-Bharat.pdf
+Dummy-Bank-Statement.pdf
+Employee-Handbook.pdf
 
-Question
- ↓
-Supervisor
- ↓
-Document RAG
- ↓
-Pinecone
- ↓
-Relevant PDF chunks
- ↓
+Currently selected:
+
+Ayushman-Bharat.pdf
+
+User asks:
+
+"What is the name of the bank?"
+
+The system can still search:
+
+Knowledge Base
+      ↓
+Dummy-Bank-Statement.pdf
+      ↓
+Relevant Chunk
+      ↓
 Gemini
- ↓
-Answer + Sources
-🌐 Web RAG
+      ↓
+People's Trust Bank
+🌐 Example 2 — Web RAG
 
-Enter:
+User:
 
 https://en.wikipedia.org/wiki/Artificial_intelligence
 
-Then ask:
+Then:
 
 "What is this webpage about?"
 
-The system dynamically:
+Flow:
 
 URL
  ↓
-Requests
- ↓
-Playwright if required
- ↓
-Reader fallback if required
- ↓
-Content extraction
+Extraction
  ↓
 Chunking
  ↓
-Embeddings
+Embedding
  ↓
 Pinecone
  ↓
@@ -738,15 +933,34 @@ Retrieval
 Gemini
  ↓
 Answer
-🎙️ Voice
+🔎 Example 3 — Live Web Search
 
-Speak:
+User:
+
+What is the latest AI news today?
+
+Flow:
+
+Supervisor
+   ↓
+Web Search
+   ↓
+Search Engine
+   ↓
+Results
+   ↓
+Gemini
+   ↓
+Answer + Sources
+🎙️ Example 4 — Voice
+
+User speaks:
 
 "What is machine learning?"
 
-The system:
+Flow:
 
-Voice
+🎤 Voice
  ↓
 Faster-Whisper
  ↓
@@ -762,192 +976,273 @@ Answer
  ↓
 pyttsx3
  ↓
-Audio response
+🔊 Audio
 🛡️ Error Handling
 
-The project includes validation and error handling across multiple layers.
+The application handles common failures such as:
 
-Examples include:
-
-Empty user queries
+Empty queries
 Invalid URLs
-Unsupported audio formats
-Empty audio files
 Failed webpage extraction
-Insufficient webpage content
+Unsupported audio
+Empty audio
 Failed vector retrieval
+Missing API keys
 Invalid backend responses
-Failed LLM generation
-Failed TTS generation
+LLM generation failures
+TTS failures
+Insufficient RAG context
+Missing webpage context
 Temporary file cleanup
-Missing/invalid context
 
-The application also includes structured debugging logs to trace requests across the frontend, API, agent, retrieval and speech layers.
+Debug logs are also included across:
 
-🔍 Design Principles
-1. Modular
+Frontend
+   ↓
+FastAPI
+   ↓
+Supervisor
+   ↓
+Agent Node
+   ↓
+Retriever
+   ↓
+Pinecone
+   ↓
+Gemini
 
-Each major capability has its own module.
+This made debugging routing and state-management issues significantly easier during development.
 
-2. Agentic
+🎯 Design Principles
+1. 🧩 Modular
 
-The system dynamically chooses the appropriate processing path.
+Each capability is separated into its own module.
 
-3. Retrieval-Grounded
+2. 🧠 Agentic
 
-RAG responses are generated using retrieved context rather than relying solely on the LLM.
+The application dynamically selects the appropriate processing path.
 
-4. Multimodal
+3. 📚 Retrieval-Grounded
 
-The system supports:
+RAG answers are generated using retrieved context.
+
+4. 🌐 Context-Aware
+
+Previous webpage context and conversation history can influence follow-up requests.
+
+5. 🔄 Flexible Routing
+
+The user can switch between:
+
+PDF A
+   ↓
+PDF B
+   ↓
+Web
+   ↓
+Web Search
+   ↓
+General AI
+
+without being permanently locked into one route.
+
+6. 🌐 URL-Agnostic
+
+Web RAG uses multiple generic extraction strategies instead of website-specific scraping rules.
+
+7. 🎙️ Multimodal
+
+Supports:
 
 Text
 PDF
 Web
 Image
 Voice
-5. Extensible
+8. 🚀 Extensible
 
-New agents can be added to the LangGraph architecture without redesigning the entire application.
-
-6. URL-Agnostic Web RAG
-
-Web extraction is designed around multiple generic extraction methods instead of website-specific rules.
+New agents and tools can be added to the LangGraph workflow without redesigning the entire application.
 
 📊 Current Capabilities
 Capability	Status
-Streamlit frontend	✅
-FastAPI backend	✅
-LangGraph agent architecture	✅
-Supervisor routing	✅
-Document RAG	✅
-Pinecone retrieval	✅
-Gemini generation	✅
-Dynamic Web RAG	✅
-Requests web extraction	✅
-BeautifulSoup parsing	✅
-Playwright fallback	✅
-Generic reader fallback	✅
-URL-specific vector filtering	✅
-Conversation history	✅
-OCR pipeline	✅
+Streamlit Frontend	✅
+FastAPI Backend	✅
+LangGraph Agent Architecture	✅
+Supervisor Routing	✅
+Intent Classification	✅
+Multi-Document RAG	✅
+Pinecone Retrieval	✅
+Gemini Generation	✅
+Web RAG	✅
+Persistent Web Indexing	✅
+URL-Specific Web Retrieval	✅
+Live Web Search	✅
+Conversation History	✅
+OCR	✅
 Faster-Whisper STT	✅
 pyttsx3 TTS	✅
-Source rendering	✅
-Modular API client	✅
-Error handling/debug logging	✅
+Source Rendering	✅
+Requests Extraction	✅
+BeautifulSoup Parsing	✅
+Playwright Fallback	✅
+Generic Reader Fallback	✅
+Error Handling	✅
+Debug Logging	✅
 ⚠️ Web RAG Limitations
 
-Web RAG depends on the accessibility and structure of the target webpage.
+Web RAG depends on whether the target webpage can be accessed and extracted.
 
-Some websites may not be extractable because of:
+Some websites may prevent extraction through:
 
-Authentication/login requirements
-CAPTCHA
-Strong anti-bot protection
-Robots/access restrictions
-Highly dynamic client-side applications
-Content loaded only after complex user interaction
-Region restrictions
-API-only content
+🔐 Authentication
+🤖 CAPTCHA
+🛡️ Anti-bot systems
+🚫 Access restrictions
+🌍 Region restrictions
+⚡ Highly dynamic applications
+🖱️ Complex user interactions
+🔌 API-only content
 
-The system therefore uses multiple generic extraction strategies, but 100% webpage coverage cannot be guaranteed.
+Multiple extraction strategies improve coverage, but 100% webpage accessibility cannot be guaranteed.
 
 🔮 Future Improvements
 
-Potential future improvements include:
+Potential improvements include:
 
-Streaming LLM responses
-Better persistent conversation memory
-Redis-based session management
-More advanced reranking
-Hybrid keyword + semantic retrieval
-Better multilingual voice support
-GPU-based Faster-Whisper inference
-Higher-quality neural TTS
-Authentication and user management
-Background document/web indexing
-Celery or task-queue based processing
-Docker deployment
-Cloud deployment
-Observability and tracing
-Automated evaluation datasets
-RAG evaluation metrics
-Agent execution tracing
-Better webpage-specific content extraction without hard-coding websites
+🔄 Streaming LLM responses
+🧠 Long-term conversation memory
+⚡ Redis session management
+🔎 Hybrid keyword + semantic retrieval
+🏆 Advanced reranking
+🌍 Better multilingual support
+🎙️ GPU-based Whisper inference
+🔊 Neural TTS
+🔐 Authentication and user management
+⚙️ Background indexing
+🐳 Docker deployment
+☁️ Cloud deployment
+📊 Observability and tracing
+🧪 Automated RAG evaluation
+📈 Retrieval quality metrics
+🧠 Agent execution tracing
+🌐 Improved webpage extraction
+💡 What I Built & Learned
 
-🎯 What I Built
+This project was built as a practical exploration of modern AI application architecture.
 
-This project was developed as a practical exploration of how modern AI systems are constructed beyond simply calling an LLM API.
+The goal was not simply:
 
-The main focus was understanding the complete pipeline:
+User → LLM → Answer
 
-Raw Input
-    ↓
-Preprocessing
-    ↓
-Intent Classification
-    ↓
-Agent Routing
-    ↓
-Retrieval / Tool Execution
-    ↓
-Context Construction
-    ↓
-LLM Generation
-    ↓
-Source Attribution
-    ↓
-Final Response
+Instead, I designed a complete pipeline:
 
-The project combines Agentic AI + RAG + Vector Search + Multimodal Processing + Voice + Web Intelligence into one modular application.
+                   RAW INPUT
+                       │
+                       ▼
+                PREPROCESSING
+                       │
+                       ▼
+               INTENT ANALYSIS
+                       │
+                       ▼
+                AGENT ROUTING
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       RAG          WEB RAG      WEB SEARCH
+          │            │            │
+          └────────────┼────────────┘
+                       ▼
+                  RETRIEVAL
+                       │
+                       ▼
+               CONTEXT BUILDING
+                       │
+                       ▼
+                    GEMINI
+                       │
+                       ▼
+              SOURCE ATTRIBUTION
+                       │
+                       ▼
+                 FINAL ANSWER
 
-👩‍💻 Learning Outcomes
+The project helped me understand the practical challenges behind:
 
-Through this project, I worked with:
-
-Agentic workflow design
-LangGraph
+Agentic AI
+Intent classification
+State management
 RAG architecture
 Vector databases
 Embeddings
-Semantic search
+Semantic retrieval
 Prompt engineering
+Web extraction
 LLM integration
-FastAPI API development
-Streamlit application development
-PDF processing
-Web scraping
-Browser automation
-Speech recognition
-Text-to-speech
+FastAPI
+Streamlit
+Voice processing
 OCR
-API integration
-State management
 Error handling
-Debugging distributed application flows
-Git/GitHub project management
+Production-style debugging
+🧠 Most Important Learning
 
-Most importantly, the project helped me understand the "behind the scenes" of an AI application—how raw inputs are transformed into structured context, routed through specialized components, retrieved when necessary, passed to an LLM, and finally returned to the user through text or voice.
+The biggest architectural lesson from this project was:
+
+Routing and state management are just as important as the LLM itself.
+
+A powerful LLM cannot fix an incorrectly routed request.
+
+The final system therefore separates:
+
+🧠 Decision
+      ↓
+🔀 Routing
+      ↓
+🔎 Retrieval / Tool
+      ↓
+📚 Context
+      ↓
+🤖 Generation
+
+This separation makes the system easier to debug, extend and maintain.
 
 📌 Project Summary
 
-Agentic RAG Space is a modular, multimodal AI assistant built using LangGraph, FastAPI, Streamlit, Gemini and Pinecone. It intelligently routes user requests across document RAG, dynamic Web RAG, general AI, OCR, weather and conversational capabilities. The system supports both text and voice interaction, uses Faster-Whisper for speech recognition and pyttsx3 for speech synthesis, and employs multiple generic web extraction strategies including Requests, BeautifulSoup, Playwright and a reader fallback.
+Agentic RAG Space is a modular multimodal AI assistant built using LangGraph, FastAPI, Streamlit, Google Gemini and Pinecone.
+
+It intelligently routes requests across:
+
+📚 Multi-Document RAG
+🌐 Web RAG
+🔎 Live Web Search
+🖼️ OCR
+🌤️ Weather
+🤖 General AI
+👋 Conversation
+🎙️ Voice
+
+The system supports cross-document semantic retrieval, persistent indexing of user-provided webpages, conversational Web RAG, voice interaction, OCR and source attribution.
+
+The project demonstrates how an AI assistant can be designed as a collection of specialized components rather than a single LLM call.
 
 👩‍💻 Author
-
 Shambhavi Jha
 
-B.Tech — Computer Science Engineering
-Specialization: Data Science
+🎓 B.Tech — Computer Science Engineering
+📊 Specialization: Data Science
 
-Interested in:
+Areas of Interest
+🤖 Artificial Intelligence
+🧠 Machine Learning
+✨ Generative AI
+🔤 Large Language Models
+📚 RAG
+🔀 Agentic AI
+📊 Data Science
+⚙️ Backend Engineering
+⭐ If you found this project interesting
 
-Artificial Intelligence
-Machine Learning
-Generative AI
-LLMs
-RAG
-Agentic AI
-Data Science
-Backend Engineering
+Feel free to explore the repository, raise issues, suggest improvements, or build upon the architecture.
+
+Built to understand what happens behind the scenes of modern AI applications. 🚀
