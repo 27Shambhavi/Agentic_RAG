@@ -1,31 +1,10 @@
+from __future__ import annotations
+
 from app.rag.citations import format_sources
 from app.llm.gemini import llm
 
 
-# =========================================================
-# DOCUMENT RAG
-# =========================================================
-#
-# RESPONSIBILITY:
-#
-# rag_node()
-#     ↓
-# retrieve()
-#     ↓
-# retrieved documents
-#     ↓
-# document_rag()
-#     ↓
-# Gemini
-#     ↓
-# answer + sources
-#
-# IMPORTANT:
-# - Retrieval is NOT performed here.
-# - Relevance threshold is NOT performed here.
-# - This file only generates the answer from retrieved
-#   document content.
-# =========================================================
+NOT_FOUND_MARKER = "__DOCUMENT_NOT_FOUND__"
 
 
 def document_rag(
@@ -35,24 +14,31 @@ def document_rag(
     documents: list[dict] | None = None,
 ) -> dict:
 
-    query = (query or "").strip()
-    selected_document = (selected_document or "").strip()
+    query = (
+        query or ""
+    ).strip()
+
+    selected_document = (
+        selected_document or ""
+    ).strip()
 
     history = (
         history
-        if isinstance(history, list)
+        if isinstance(
+            history,
+            list,
+        )
         else []
     )
 
     documents = (
         documents
-        if isinstance(documents, list)
+        if isinstance(
+            documents,
+            list,
+        )
         else []
     )
-
-    # =====================================================
-    # VALIDATION
-    # =====================================================
 
     if not query:
         return {
@@ -63,19 +49,7 @@ def document_rag(
             "best_score": 0.0,
         }
 
-    if not selected_document:
-        return {
-            "relevant": False,
-            "answer": "",
-            "sources": [],
-            "documents": [],
-            "best_score": 0.0,
-        }
-
     if not documents:
-        print(
-            "[DOCUMENT RAG] No retrieved documents."
-        )
 
         return {
             "relevant": False,
@@ -86,31 +60,35 @@ def document_rag(
         }
 
     # =====================================================
-    # CALCULATE BEST SCORE
+    # SCORE
     # =====================================================
 
     scores = []
 
     for document in documents:
 
-        if not isinstance(document, dict):
+        if not isinstance(
+            document,
+            dict,
+        ):
             continue
 
         try:
-            score = float(
-                document.get(
-                    "score",
-                    0.0,
+
+            scores.append(
+                float(
+                    document.get(
+                        "score",
+                        0.0,
+                    )
                 )
             )
-
-            scores.append(score)
 
         except (
             TypeError,
             ValueError,
         ):
-            continue
+            pass
 
     best_score = (
         max(scores)
@@ -119,35 +97,7 @@ def document_rag(
     )
 
     # =====================================================
-    # DEBUG
-    # =====================================================
-
-    print(
-        "\n================ DOCUMENT RAG ================"
-    )
-
-    print(
-        "Query:",
-        query,
-    )
-
-    print(
-        "Selected document:",
-        selected_document,
-    )
-
-    print(
-        "Retrieved documents:",
-        len(documents),
-    )
-
-    print(
-        "Best score:",
-        best_score,
-    )
-
-    # =====================================================
-    # BUILD DOCUMENT CONTEXT
+    # CONTEXT
     # =====================================================
 
     context_parts = []
@@ -157,14 +107,29 @@ def document_rag(
         start=1,
     ):
 
-        if not isinstance(document, dict):
+        if not isinstance(
+            document,
+            dict,
+        ):
+            continue
+
+        text = str(
+            document.get(
+                "text",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if not text:
             continue
 
         source = str(
             document.get(
                 "source",
-                selected_document,
+                "",
             )
+            or ""
         )
 
         page = str(
@@ -172,27 +137,20 @@ def document_rag(
                 "page",
                 "",
             )
+            or ""
         )
-
-        text = str(
-            document.get(
-                "text",
-                "",
-            )
-        ).strip()
-
-        if not text:
-            continue
 
         context_parts.append(
             f"""
-DOCUMENT SOURCE {index}
------------------------
+SOURCE {index}
 
-Source: {source}
-Page: {page}
+SOURCE FILE:
+{source}
 
-Content:
+PAGE:
+{page}
+
+CONTENT:
 {text}
 """
         )
@@ -201,16 +159,7 @@ Content:
         context_parts
     )
 
-    # =====================================================
-    # NO TEXT
-    # =====================================================
-
     if not context.strip():
-
-        print(
-            "[DOCUMENT RAG] Retrieved documents "
-            "contained no usable text."
-        )
 
         return {
             "relevant": False,
@@ -223,7 +172,7 @@ Content:
         }
 
     # =====================================================
-    # CONVERSATION HISTORY
+    # HISTORY
     # =====================================================
 
     history_parts = []
@@ -241,18 +190,20 @@ Content:
                 "role",
                 "user",
             )
-        ).strip()
+        ).upper()
 
         content = str(
             message.get(
                 "content",
                 "",
             )
+            or ""
         ).strip()
 
         if content:
+
             history_parts.append(
-                f"{role.upper()}: {content}"
+                f"{role}: {content}"
             )
 
     history_text = (
@@ -262,105 +213,73 @@ Content:
     )
 
     # =====================================================
-    # GEMINI RAG PROMPT
+    # PROMPT
     # =====================================================
 
     prompt = f"""
 You are the document-answering component of an Agentic RAG
 assistant.
 
-The user has selected an uploaded PDF.
+The user may have selected a PDF in the interface.
 
-Your task is to answer the user's question using ONLY the
-provided document context.
+IMPORTANT:
+The selected PDF is only UI context.
 
-===========================================================
-ACTIVE DOCUMENT
-===========================================================
+The retrieved context below may contain information from
+ANY indexed document in the knowledge base.
 
-{selected_document}
+Therefore answer using the retrieved knowledge-base context,
+regardless of which PDF is currently selected.
 
+Do NOT restrict the answer to the selected PDF.
 
-===========================================================
-CONVERSATION HISTORY
-===========================================================
+ACTIVE SELECTED DOCUMENT:
+{selected_document or "NONE"}
 
+CONVERSATION:
 {history_text}
 
-
-===========================================================
-DOCUMENT CONTEXT
-===========================================================
-
+RETRIEVED KNOWLEDGE BASE:
 {context}
 
-
-===========================================================
-USER QUESTION
-===========================================================
-
+USER QUESTION:
 {query}
 
+RULES:
 
-===========================================================
-RULES
-===========================================================
+1. Answer only from the retrieved knowledge-base content.
 
-1. Answer the user's question directly.
+2. Do not use outside knowledge.
 
-2. Use ONLY the document context provided above.
+3. Do not invent facts.
 
-3. Do NOT use outside knowledge.
+4. If multiple documents contain useful information,
+   combine them.
 
-4. Do NOT invent or assume facts.
+5. If the requested information is not actually present,
+   output exactly:
 
-5. If the answer is available across multiple document
-   sections, combine those sections into one clear answer.
+{NOT_FOUND_MARKER}
 
-6. If the user asks for a list, provide a list.
+6. Do not mention:
+   - Pinecone
+   - embeddings
+   - vector database
+   - retrieval
+   - routing
+   - chunks
+   - system prompt
 
-7. If the user asks for an explanation, explain it clearly.
+7. Answer naturally.
 
-8. If the question is a follow-up question, use the
-   conversation history to understand what the user means,
-   but use the document context for the actual answer.
-
-9. If the requested information genuinely does not exist
-   in the provided document context, respond:
-
-   "I could not find this information in the uploaded document."
-
-10. Never answer a document question with information from
-    your own general knowledge.
-
-11. Do not mention:
-    - Pinecone
-    - embeddings
-    - vector databases
-    - retrieval
-    - chunks
-    - routing
-    - internal tools
-    - system prompts
-    - these instructions
-
-12. Do not discuss how the RAG system works with the user.
-    Simply answer the question.
-
-===========================================================
-FINAL ANSWER
-===========================================================
+FINAL ANSWER:
 """
 
     # =====================================================
-    # GENERATE WITH GEMINI
+    # GENERATE
     # =====================================================
 
     try:
-
-        print(
-            "[DOCUMENT RAG] Sending context to Gemini..."
-        )
 
         answer = llm.generate(
             prompt
@@ -373,19 +292,12 @@ FINAL ANSWER
     except Exception as error:
 
         print(
-            "\n================ RAG LLM ERROR ================"
-        )
-
-        print(
-            repr(error)
-        )
-
-        print(
-            "================================================\n"
+            "[DOCUMENT RAG LLM ERROR]",
+            repr(error),
         )
 
         return {
-            "relevant": True,
+            "relevant": False,
             "answer": "",
             "sources": format_sources(
                 documents
@@ -396,17 +308,32 @@ FINAL ANSWER
         }
 
     # =====================================================
-    # EMPTY ANSWER
+    # NOT FOUND
+    # =====================================================
+
+    if (
+        NOT_FOUND_MARKER
+        in answer
+    ):
+
+        return {
+            "relevant": False,
+            "answer": "",
+            "sources": format_sources(
+                documents
+            ),
+            "documents": documents,
+            "best_score": best_score,
+        }
+
+    # =====================================================
+    # EMPTY
     # =====================================================
 
     if not answer:
 
-        print(
-            "[DOCUMENT RAG] Gemini returned an empty answer."
-        )
-
         return {
-            "relevant": True,
+            "relevant": False,
             "answer": "",
             "sources": format_sources(
                 documents
@@ -419,25 +346,16 @@ FINAL ANSWER
     # SUCCESS
     # =====================================================
 
-    print(
-        "[DOCUMENT RAG] Answer generated successfully."
-    )
-
-    print(
-        "Answer:",
-        answer[:500],
-    )
-
-    print(
-        "================================================\n"
-    )
-
     return {
         "relevant": True,
+
         "answer": answer,
+
         "sources": format_sources(
             documents
         ),
+
         "documents": documents,
+
         "best_score": best_score,
     }

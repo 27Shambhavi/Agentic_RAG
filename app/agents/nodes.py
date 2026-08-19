@@ -8,15 +8,11 @@ from app.rag.retriever import retrieve
 from app.llm.gemini import llm
 
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
-
 RAG_RELEVANCE_THRESHOLD = 0.15
 
 
 # =========================================================
-# SAFE HISTORY
+# HELPERS
 # =========================================================
 
 def safe_history(
@@ -28,26 +24,23 @@ def safe_history(
         [],
     )
 
-    if not isinstance(
-        history,
-        list,
-    ):
-        return []
+    return (
+        history
+        if isinstance(
+            history,
+            list,
+        )
+        else []
+    )
 
-    return history
-
-
-# =========================================================
-# HISTORY TEXT
-# =========================================================
 
 def build_history_text(
     history: list[dict],
 ) -> str:
 
-    history_parts = []
+    parts = []
 
-    for message in history[-5:]:
+    for message in history[-6:]:
 
         if not isinstance(
             message,
@@ -60,67 +53,43 @@ def build_history_text(
                 "role",
                 "user",
             )
-        ).strip()
+        ).upper()
 
         content = str(
             message.get(
                 "content",
                 "",
             )
+            or ""
         ).strip()
 
         if content:
 
-            history_parts.append(
-                f"{role.upper()}: {content}"
+            parts.append(
+                f"{role}: {content}"
             )
 
-    if not history_parts:
-
-        return "No previous conversation."
-
-    return "\n".join(
-        history_parts
+    return (
+        "\n".join(parts)
+        if parts
+        else "No previous conversation."
     )
 
 
 # =========================================================
-# DOCUMENT RETRIEVAL
-# =========================================================
-#
-# IMPORTANT:
-#
-# This is the ONLY retrieval call for PDF RAG.
-#
-# document_rag() receives these already-retrieved
-# documents and DOES NOT retrieve again.
-#
+# RAG RETRIEVAL
 # =========================================================
 
 def get_document_matches(
     query: str,
-    selected_document: str,
 ) -> list[dict]:
-
-    if (
-        not query
-        or not selected_document
-    ):
-        return []
 
     try:
 
-        matches = retrieve(
+        return retrieve(
             query=query,
-            top_k=5,
-            selected_document=selected_document,
+            top_k=8,
         )
-
-        if not matches:
-
-            return []
-
-        return matches
 
     except Exception as error:
 
@@ -132,70 +101,40 @@ def get_document_matches(
         return []
 
 
-# =========================================================
-# BEST DOCUMENT SCORE
-# =========================================================
-
 def get_best_document_score(
-    matches,
+    matches: list[dict],
 ) -> float:
 
-    best_score = 0.0
+    scores = []
 
-    for match in matches or []:
-
-        if not isinstance(
-            match,
-            dict,
-        ):
-            continue
+    for match in matches:
 
         try:
 
-            score = float(
-                match.get(
-                    "score",
-                    0.0,
+            scores.append(
+                float(
+                    match.get(
+                        "score",
+                        0.0,
+                    )
                 )
-            )
-
-            best_score = max(
-                best_score,
-                score,
             )
 
         except (
             TypeError,
             ValueError,
         ):
+            pass
 
-            continue
-
-    return best_score
+    return (
+        max(scores)
+        if scores
+        else 0.0
+    )
 
 
 # =========================================================
-# PDF / DOCUMENT RAG NODE
-# =========================================================
-#
-# IMPORTANT ARCHITECTURE:
-#
-# PDF RAG NEVER falls back to normal Web Search.
-#
-# If a PDF is selected:
-#
-#     selected PDF
-#          ↓
-#       retrieve
-#          ↓
-#      relevance
-#          ↓
-#    document_rag
-#          ↓
-#        LLM
-#
-# Web Search is a completely separate route.
-#
+# RAG NODE
 # =========================================================
 
 def rag_node(
@@ -222,10 +161,6 @@ def rag_node(
         state
     )
 
-    # =====================================================
-    # EMPTY QUERY
-    # =====================================================
-
     if not query:
 
         return {
@@ -237,38 +172,8 @@ def rag_node(
 
             "sources": [],
 
-            "relevance_score": 0.0,
+            "rag_found": False,
         }
-
-    # =====================================================
-    # NO DOCUMENT
-    # =====================================================
-
-    if not selected_document:
-
-        print(
-            "[RAG] No selected document."
-        )
-
-        return {
-            **state,
-
-            "route": "rag",
-
-            "answer": (
-                "Please select a PDF document first."
-            ),
-
-            "sources": [],
-
-            "document_context": False,
-
-            "relevance_score": 0.0,
-        }
-
-    # =====================================================
-    # START LOGGING
-    # =====================================================
 
     print(
         "\n================ RAG NODE ================"
@@ -281,12 +186,11 @@ def rag_node(
 
     print(
         "Selected document:",
-        selected_document,
+        selected_document or "NONE",
     )
 
     print(
-        "RAG threshold:",
-        RAG_RELEVANCE_THRESHOLD,
+        "Retrieval scope: ENTIRE KNOWLEDGE BASE"
     )
 
     # =====================================================
@@ -294,12 +198,13 @@ def rag_node(
     # =====================================================
 
     matches = get_document_matches(
-        query=query,
-        selected_document=selected_document,
+        query
     )
 
-    best_score = get_best_document_score(
-        matches
+    best_score = (
+        get_best_document_score(
+            matches
+        )
     )
 
     print(
@@ -308,24 +213,18 @@ def rag_node(
     )
 
     print(
-        "Best relevance score:",
+        "Best score:",
         best_score,
     )
 
     # =====================================================
-    # NO MATCHES
-    # =====================================================
-    #
-    # IMPORTANT:
-    #
-    # DO NOT CALL web_node().
-    #
+    # NO MATCH
     # =====================================================
 
     if not matches:
 
         print(
-            "[RAG] No chunks found for selected document."
+            "[RAG] No knowledge-base match."
         )
 
         return {
@@ -333,43 +232,30 @@ def rag_node(
 
             "route": "rag",
 
-            "answer": (
-                "I couldn't find relevant information "
-                "in the selected document."
-            ),
+            "answer": "",
 
             "sources": [],
 
-            "selected_document": selected_document,
-
-            "document_context": True,
-
             "relevance_score": 0.0,
+
+            "rag_found": False,
+
+            "fallback_reason": (
+                "No relevant knowledge-base match."
+            ),
         }
 
     # =====================================================
-    # RELEVANCE GATE
-    # =====================================================
-    #
-    # ONLY ONE PDF RELEVANCE GATE.
-    #
-    # document_rag() does NOT apply another threshold.
-    #
+    # THRESHOLD
     # =====================================================
 
-    if best_score < RAG_RELEVANCE_THRESHOLD:
+    if (
+        best_score
+        < RAG_RELEVANCE_THRESHOLD
+    ):
 
         print(
-            "[RAG] Relevance below threshold."
-        )
-
-        print(
-            f"[RAG] {best_score:.4f} < "
-            f"{RAG_RELEVANCE_THRESHOLD:.4f}"
-        )
-
-        print(
-            "[RAG] Staying in PDF RAG."
+            "[RAG] Below relevance threshold."
         )
 
         return {
@@ -377,50 +263,32 @@ def rag_node(
 
             "route": "rag",
 
-            "answer": (
-                "I couldn't find enough relevant information "
-                "in the selected document to answer this question."
-            ),
+            "answer": "",
 
             "sources": matches,
 
-            "selected_document": selected_document,
-
-            "document_context": True,
-
             "relevance_score": best_score,
+
+            "rag_found": False,
+
+            "fallback_reason": (
+                "Knowledge-base relevance below threshold."
+            ),
         }
 
     # =====================================================
-    # RELEVANT DOCUMENT
-    # =====================================================
-
-    print(
-        "[RAG] Relevant document chunks found."
-    )
-
-    print(
-        "[RAG] Passing retrieved chunks to document_rag()."
-    )
-
-    # =====================================================
-    # DOCUMENT RAG GENERATION
-    # =====================================================
-    #
-    # IMPORTANT:
-    #
-    # Pass `matches` directly.
-    #
-    # document_rag() must NOT call retrieve() again.
-    #
+    # GENERATE
     # =====================================================
 
     try:
 
         result = document_rag(
+
             query=query,
 
-            selected_document=selected_document,
+            selected_document=(
+                selected_document
+            ),
 
             history=history,
 
@@ -430,7 +298,7 @@ def rag_node(
     except Exception as error:
 
         print(
-            "[RAG ANSWER ERROR]",
+            "[RAG GENERATION ERROR]",
             repr(error),
         )
 
@@ -439,57 +307,37 @@ def rag_node(
 
             "route": "rag",
 
-            "answer": (
-                "I found relevant information in the "
-                "selected document, but I couldn't "
-                "generate the answer right now."
-            ),
+            "answer": "",
 
             "sources": matches,
 
-            "selected_document": selected_document,
-
-            "document_context": True,
-
             "relevance_score": best_score,
-        }
 
-    # =====================================================
-    # INVALID RESULT
-    # =====================================================
+            "rag_found": False,
+
+            "fallback_reason": (
+                "Document answer generation failed."
+            ),
+        }
 
     if not isinstance(
         result,
         dict,
     ):
 
-        print(
-            "[RAG] Invalid document_rag result."
-        )
-
         return {
             **state,
 
             "route": "rag",
 
-            "answer": (
-                "I found relevant information in the "
-                "selected document, but couldn't "
-                "generate a valid answer."
-            ),
+            "answer": "",
 
             "sources": matches,
 
-            "selected_document": selected_document,
-
-            "document_context": True,
-
             "relevance_score": best_score,
-        }
 
-    # =====================================================
-    # ANSWER
-    # =====================================================
+            "rag_found": False,
+        }
 
     answer = (
         result.get(
@@ -499,42 +347,30 @@ def rag_node(
         or ""
     ).strip()
 
-    # =====================================================
-    # SOURCES
-    # =====================================================
-
     sources = (
         result.get(
             "sources",
             [],
         )
-        or []
+        or matches
     )
-
-    if not sources:
-
-        sources = matches
-
-    # =====================================================
-    # DOCUMENT RAG RELEVANCE
-    # =====================================================
-    #
-    # document_rag() should normally return relevant=True
-    # because rag_node() already passed the relevance gate.
-    #
-    # We do NOT route to Web if it says False.
-    #
-    # =====================================================
 
     relevant = result.get(
         "relevant",
-        True,
+        False,
     )
 
-    if relevant is False:
+    # =====================================================
+    # NOT RELEVANT
+    # =====================================================
+
+    if (
+        relevant is False
+        or not answer
+    ):
 
         print(
-            "[RAG] document_rag reported insufficient content."
+            "[RAG] Answer not found."
         )
 
         return {
@@ -542,49 +378,21 @@ def rag_node(
 
             "route": "rag",
 
-            "answer": (
-                "I couldn't find enough information "
-                "in the selected document to answer "
-                "this question."
-            ),
-
-            "sources": sources or matches,
-
-            "selected_document": selected_document,
-
-            "document_context": True,
-
-            "relevance_score": best_score,
-        }
-
-    # =====================================================
-    # EMPTY ANSWER
-    # =====================================================
-
-    if not answer:
-
-        print(
-            "[RAG] Empty document answer."
-        )
-
-        return {
-            **state,
-
-            "route": "rag",
-
-            "answer": (
-                "I found relevant information in the "
-                "selected document, but couldn't generate "
-                "an answer right now."
-            ),
+            "answer": "",
 
             "sources": sources,
 
-            "selected_document": selected_document,
+            "selected_document": (
+                selected_document
+            ),
 
-            "document_context": True,
+            "document_context": bool(
+                selected_document
+            ),
 
             "relevance_score": best_score,
+
+            "rag_found": False,
         }
 
     # =====================================================
@@ -593,20 +401,6 @@ def rag_node(
 
     print(
         "[RAG] SUCCESS"
-    )
-
-    print(
-        "RAG relevance:",
-        best_score,
-    )
-
-    print(
-        "RAG sources:",
-        len(sources),
-    )
-
-    print(
-        "==========================================\n"
     )
 
     return {
@@ -618,16 +412,22 @@ def rag_node(
 
         "sources": sources,
 
-        "selected_document": selected_document,
+        "selected_document": (
+            selected_document
+        ),
 
-        "document_context": True,
+        "document_context": bool(
+            selected_document
+        ),
 
         "relevance_score": best_score,
+
+        "rag_found": True,
     }
 
 
 # =========================================================
-# GENERAL AI NODE
+# GENERAL
 # =========================================================
 
 def general_node(
@@ -646,62 +446,19 @@ def general_node(
         state
     )
 
-    # =====================================================
-    # EMPTY QUERY
-    # =====================================================
-
-    if not query:
-
-        return {
-            **state,
-
-            "route": "general",
-
-            "answer": "",
-
-            "sources": [],
-        }
-
-    history_text = build_history_text(
-        history
-    )
-
-    # =====================================================
-    # GENERAL PROMPT
-    # =====================================================
-
     prompt = f"""
-You are a helpful general-purpose AI assistant.
+You are a helpful general AI assistant.
 
-CONVERSATION HISTORY:
-{history_text}
+CONVERSATION:
+{build_history_text(history)}
 
-USER QUESTION:
+USER:
 {query}
 
-Answer the user's question directly and naturally.
-
-Use your own general knowledge.
-
-Do not mention:
-- RAG
-- Pinecone
-- routing
-- internal tools
-- system architecture
-- document retrieval
+Answer naturally and directly.
 """
 
     try:
-
-        print(
-            "\n================ GENERAL LLM ================"
-        )
-
-        print(
-            "Query:",
-            query,
-        )
 
         answer = llm.generate(
             prompt
@@ -712,14 +469,6 @@ Do not mention:
         ).strip()
 
         if answer:
-
-            print(
-                "[GENERAL] LLM SUCCESS"
-            )
-
-            print(
-                "=============================================\n"
-            )
 
             return {
                 **state,
@@ -734,73 +483,89 @@ Do not mention:
     except Exception as error:
 
         print(
-            "[GENERAL LLM ERROR]",
+            "[GENERAL ERROR]",
             repr(error),
         )
 
-    # =====================================================
-    # GENERAL LLM FAILED
-    # =====================================================
-    #
-    # This fallback is still normal Web Search because
-    # there is NO active PDF context here.
-    #
-    # =====================================================
-
-    print(
-        "[GENERAL] LLM failed -> WEB search."
-    )
-
+    # If general LLM fails, use web.
     return web_node(
         {
             **state,
 
             "route": "web",
-
-            "fallback_reason": (
-                "General LLM failed."
-            ),
         }
     )
 
 
 # =========================================================
-# GREETING NODE
+# GREETING
 # =========================================================
 
 def greeting_node(
     state: AgentState,
 ) -> AgentState:
 
+    query = (
+        state.get(
+            "query",
+            "",
+        )
+        or ""
+    ).strip()
+
+    history = safe_history(
+        state
+    )
+
+    prompt = f"""
+You are a friendly AI assistant.
+
+CONVERSATION:
+{build_history_text(history)}
+
+USER:
+{query}
+
+Respond naturally to the user.
+
+Do not give a generic fixed greeting.
+Adapt your response to what the user said.
+"""
+
+    try:
+
+        answer = llm.generate(
+            prompt
+        )
+
+        answer = (
+            answer or ""
+        ).strip()
+
+    except Exception as error:
+
+        print(
+            "[GREETING ERROR]",
+            repr(error),
+        )
+
+        answer = (
+            "Hello! How can I help you?"
+        )
+
     return {
         **state,
 
         "route": "greeting",
 
-        "answer": (
-            "Hello! 👋 How can I help you today?"
-        ),
+        "answer": answer,
 
         "sources": [],
     }
 
 
 # =========================================================
-# NORMAL WEB SEARCH NODE
-# =========================================================
-#
-# This is DIFFERENT from Web RAG.
-#
-# Normal Web Search:
-#
-# user question
-#      ↓
-# search engine
-#      ↓
-# search results
-#      ↓
-# LLM
-#
+# WEB SEARCH
 # =========================================================
 
 def web_node(
@@ -847,10 +612,6 @@ def web_node(
             max_results=5,
         )
 
-        # =================================================
-        # INVALID RESULT
-        # =================================================
-
         if not isinstance(
             result,
             dict,
@@ -866,10 +627,6 @@ def web_node(
                 "sources": [],
             }
 
-        # =================================================
-        # ANSWER
-        # =================================================
-
         answer = (
             result.get(
                 "answer",
@@ -878,10 +635,6 @@ def web_node(
             or ""
         ).strip()
 
-        # =================================================
-        # SOURCES
-        # =================================================
-
         sources = (
             result.get(
                 "sources",
@@ -889,15 +642,6 @@ def web_node(
             )
             or []
         )
-
-        print(
-            "Web sources:",
-            len(sources),
-        )
-
-        # =================================================
-        # DIRECT ANSWER
-        # =================================================
 
         if answer:
 
@@ -909,130 +653,93 @@ def web_node(
                 "answer": answer,
 
                 "sources": sources,
+
+                "web_context": False,
             }
 
-        # =================================================
-        # SOURCE-ONLY FALLBACK
-        # =================================================
+        # -------------------------------------------------
+        # SOURCE SYNTHESIS
+        # -------------------------------------------------
 
-        if sources:
+        source_parts = []
 
-            source_text = []
+        for index, source in enumerate(
+            sources[:5],
+            start=1,
+        ):
 
-            for index, source in enumerate(
-                sources[:5],
-                start=1,
+            if not isinstance(
+                source,
+                dict,
             ):
+                continue
 
-                if not isinstance(
-                    source,
-                    dict,
-                ):
-                    continue
-
-                title = str(
-                    source.get(
-                        "title",
-                        "",
-                    )
-                )
-
-                content = str(
-                    source.get(
-                        "snippet",
-                        source.get(
-                            "content",
-                            source.get(
-                                "text",
-                                "",
-                            ),
-                        ),
-                    )
-                )
-
-                url = str(
-                    source.get(
-                        "url",
-                        source.get(
-                            "link",
-                            "",
-                        ),
-                    )
-                )
-
-                source_text.append(
-                    f"""
+            source_parts.append(
+                f"""
 SOURCE {index}
 
 TITLE:
-{title}
+{source.get("title", "")}
 
 CONTENT:
-{content}
+{source.get(
+    "snippet",
+    source.get(
+        "content",
+        source.get(
+            "text",
+            "",
+        ),
+    ),
+)}
 
 URL:
-{url}
+{source.get(
+    "url",
+    source.get(
+        "link",
+        "",
+    ),
+)}
 """
-                )
-
-            combined_sources = "\n".join(
-                source_text
             )
 
-            synthesis_prompt = f"""
-You are a helpful AI assistant.
+        if source_parts:
 
-USER QUESTION:
+            prompt = f"""
+Answer the user's question using ONLY
+the following web search results.
+
+USER:
 {query}
 
-WEB SEARCH RESULTS:
-{combined_sources}
+RESULTS:
+{"".join(source_parts)}
 
-Answer the user's question using ONLY
-the information contained in the web search results.
-
-Rules:
-
-1. Give a direct answer.
-2. Use the search results as evidence.
-3. Do not invent unsupported facts.
-4. If the results are insufficient, say so.
-5. Do not mention internal routing.
-6. Do not mention RAG or Pinecone.
+Do not invent unsupported facts.
 """
 
-            try:
+            generated = llm.generate(
+                prompt
+            )
 
-                generated_answer = llm.generate(
-                    synthesis_prompt
-                )
+            generated = (
+                generated or ""
+            ).strip()
 
-                generated_answer = (
-                    generated_answer or ""
-                ).strip()
+            if generated:
 
-                if generated_answer:
+                return {
+                    **state,
 
-                    return {
-                        **state,
+                    "route": "web",
 
-                        "route": "web",
+                    "answer": generated,
 
-                        "answer": generated_answer,
+                    "sources": sources,
 
-                        "sources": sources,
-                    }
-
-            except Exception as error:
-
-                print(
-                    "[WEB FALLBACK LLM ERROR]",
-                    repr(error),
-                )
-
-        # =================================================
-        # NO ANSWER
-        # =================================================
+                    "web_context": False,
+                }
 
         return {
             **state,
@@ -1040,12 +747,13 @@ Rules:
             "route": "web",
 
             "answer": (
-                "I found web results, but I "
-                "couldn't generate a reliable answer "
-                "from them right now."
+                "I found web results, but "
+                "couldn't generate a reliable answer."
             ),
 
             "sources": sources,
+
+            "web_context": False,
         }
 
     except Exception as error:
@@ -1061,8 +769,8 @@ Rules:
             "route": "web",
 
             "answer": (
-                "I couldn't perform the web "
-                "search right now."
+                "I couldn't perform the web search "
+                "right now."
             ),
 
             "sources": [],
@@ -1070,15 +778,7 @@ Rules:
 
 
 # =========================================================
-# WEB RAG NODE
-# =========================================================
-#
-# USER URL
-#      ↓
 # WEB RAG
-#
-# This remains completely separate from PDF RAG.
-#
 # =========================================================
 
 def web_rag_node(
@@ -1105,60 +805,21 @@ def web_rag_node(
         state
     )
 
-    # =====================================================
-    # EMPTY QUERY
-    # =====================================================
-
-    if not query:
-
-        return {
-            **state,
-
-            "route": "web_rag",
-
-            "answer": "",
-
-            "sources": [],
-        }
-
-    # =====================================================
-    # URL MISSING
-    # =====================================================
-
     if not web_url:
 
         return {
             **state,
 
-            "route": "web_rag",
+            "route": "web",
 
             "answer": (
-                "Please provide a webpage URL "
-                "that you want me to analyze."
+                "No active webpage is available."
             ),
 
             "sources": [],
 
             "web_context": False,
         }
-
-    print(
-        "\n================ WEB RAG NODE ================"
-    )
-
-    print(
-        "URL:",
-        web_url,
-    )
-
-    print(
-        "Question:",
-        query,
-    )
-
-    # =====================================================
-    # IMPORT WEB RAG
-    # =====================================================
 
     try:
 
@@ -1166,36 +827,8 @@ def web_rag_node(
             web_rag,
         )
 
-    except Exception as error:
-
-        print(
-            "[WEB RAG IMPORT ERROR]",
-            repr(error),
-        )
-
-        return {
-            **state,
-
-            "route": "web_rag",
-
-            "answer": (
-                "Web RAG is not configured correctly."
-            ),
-
-            "sources": [],
-
-            "web_url": web_url,
-
-            "web_context": False,
-        }
-
-    # =====================================================
-    # RUN WEB RAG
-    # =====================================================
-
-    try:
-
         result = web_rag(
+
             query=query,
 
             url=web_url,
@@ -1217,19 +850,15 @@ def web_rag_node(
 
             "answer": (
                 "I couldn't retrieve and analyze "
-                "that webpage right now."
+                "the webpage right now."
             ),
 
             "sources": [],
 
             "web_url": web_url,
 
-            "web_context": False,
+            "web_context": True,
         }
-
-    # =====================================================
-    # INVALID RESULT
-    # =====================================================
 
     if not isinstance(
         result,
@@ -1242,8 +871,8 @@ def web_rag_node(
             "route": "web_rag",
 
             "answer": (
-                "The webpage was retrieved, "
-                "but I couldn't generate a reliable answer."
+                "I couldn't generate a reliable "
+                "answer from the webpage."
             ),
 
             "sources": [],
@@ -1252,10 +881,6 @@ def web_rag_node(
 
             "web_context": True,
         }
-
-    # =====================================================
-    # RESULT
-    # =====================================================
 
     answer = (
         result.get(
@@ -1273,21 +898,14 @@ def web_rag_node(
         or []
     )
 
-    # =====================================================
-    # WEB METADATA
-    # =====================================================
+    relevant = result.get(
+        "relevant",
+        False,
+    )
 
     title = (
         result.get(
             "title",
-            "",
-        )
-        or ""
-    )
-
-    scraping_method = (
-        result.get(
-            "scraping_method",
             "",
         )
         or ""
@@ -1307,56 +925,23 @@ def web_rag_node(
         index_result,
         dict,
     ):
-
         index_result = {}
 
-    chunks = index_result.get(
-        "chunks",
-        0,
-    )
+    return {
+        **state,
 
-    indexed = (
-        index_result.get(
-            "status",
-            "",
-        )
-        == "indexed"
-    )
+        "route": "web_rag",
 
-    # =====================================================
-    # LOGGING
-    # =====================================================
+        "answer": (
+            answer
+            if relevant and answer
+            else (
+                "I couldn't find enough relevant "
+                "information on the provided webpage."
+            )
+        ),
 
-    print(
-        "Title:",
-        title,
-    )
-
-    print(
-        "Scraping method:",
-        scraping_method or "unknown",
-    )
-
-    print(
-        "Chunks:",
-        chunks,
-    )
-
-    print(
-        "Best score:",
-        best_score,
-    )
-
-    print(
-        "Sources:",
-        len(sources),
-    )
-
-    # =====================================================
-    # WEB METADATA
-    # =====================================================
-
-    web_metadata = {
+        "sources": sources,
 
         "web_url": web_url,
 
@@ -1364,103 +949,33 @@ def web_rag_node(
 
         "web_title": title,
 
-        "web_scraper": scraping_method,
+        "web_scraper": (
+            result.get(
+                "scraping_method",
+                "",
+            )
+            or ""
+        ),
 
-        "web_chunks": chunks,
+        "web_chunks": index_result.get(
+            "chunks",
+            0,
+        ),
 
-        "web_indexed": indexed,
+        "web_indexed": (
+            index_result.get(
+                "status",
+                "",
+            )
+            == "indexed"
+        ),
 
         "web_relevance_score": best_score,
     }
 
-    # =====================================================
-    # WEB RAG RELEVANCE
-    # =====================================================
-
-    relevant = result.get(
-        "relevant",
-        False,
-    )
-
-    # =====================================================
-    # IMPORTANT:
-    #
-    # User explicitly supplied a URL.
-    #
-    # Never turn Web RAG into normal Web Search.
-    # =====================================================
-
-    if relevant is False:
-
-        insufficient_answer = (
-            answer
-            or
-            "I could not find enough relevant "
-            "information on the provided webpage "
-            "to answer this question."
-        )
-
-        return {
-            **state,
-
-            "route": "web_rag",
-
-            "answer": insufficient_answer,
-
-            "sources": sources,
-
-            **web_metadata,
-        }
-
-    # =====================================================
-    # EMPTY ANSWER
-    # =====================================================
-
-    if not answer:
-
-        return {
-            **state,
-
-            "route": "web_rag",
-
-            "answer": (
-                "I retrieved the webpage, "
-                "but couldn't find enough information "
-                "to answer your question."
-            ),
-
-            "sources": sources,
-
-            **web_metadata,
-        }
-
-    # =====================================================
-    # SUCCESS
-    # =====================================================
-
-    print(
-        "[WEB RAG] SUCCESS"
-    )
-
-    print(
-        "==============================================\n"
-    )
-
-    return {
-        **state,
-
-        "route": "web_rag",
-
-        "answer": answer,
-
-        "sources": sources,
-
-        **web_metadata,
-    }
-
 
 # =========================================================
-# WEATHER NODE
+# WEATHER
 # =========================================================
 
 def weather_node(
@@ -1475,32 +990,16 @@ def weather_node(
         or ""
     ).strip()
 
-    if not query:
-
-        return {
-            **state,
-
-            "route": "weather",
-
-            "answer": "",
-
-            "sources": [],
-        }
-
     try:
 
         from app.tools.weather_tool import (
             get_weather,
         )
 
-        # =================================================
-        # EXTRACT LOCATION
-        # =================================================
-
         location_prompt = f"""
-Extract the city or location from this weather question.
+Extract the city/location from this weather request.
 
-Return ONLY the city or location name.
+Return ONLY the location name.
 
 QUESTION:
 {query}
@@ -1511,16 +1010,9 @@ QUESTION:
         )
 
         city = (
-            city
-            .replace(
-                '"',
-                "",
-            )
-            .replace(
-                "'",
-                "",
-            )
-            .strip()
+            city or ""
+        ).strip().strip(
+            "\"'"
         )
 
         if not city:
@@ -1531,16 +1023,11 @@ QUESTION:
                 "route": "weather",
 
                 "answer": (
-                    "Please specify a city or "
-                    "location for the weather request."
+                    "Please specify a city or location."
                 ),
 
                 "sources": [],
             }
-
-        # =================================================
-        # GET WEATHER
-        # =================================================
 
         result = get_weather(
             city
@@ -1586,7 +1073,7 @@ QUESTION:
     except Exception as error:
 
         print(
-            "[WEATHER NODE ERROR]",
+            "[WEATHER ERROR]",
             repr(error),
         )
 
@@ -1596,8 +1083,7 @@ QUESTION:
             "route": "weather",
 
             "answer": (
-                "I couldn't retrieve the weather "
-                "right now."
+                "I couldn't retrieve the weather."
             ),
 
             "sources": [],
@@ -1605,7 +1091,7 @@ QUESTION:
 
 
 # =========================================================
-# OCR NODE
+# OCR
 # =========================================================
 
 def ocr_node(
@@ -1632,26 +1118,6 @@ def ocr_node(
         state
     )
 
-    # =====================================================
-    # EMPTY QUERY
-    # =====================================================
-
-    if not query:
-
-        return {
-            **state,
-
-            "route": "ocr",
-
-            "answer": "",
-
-            "sources": [],
-        }
-
-    # =====================================================
-    # NO OCR
-    # =====================================================
-
     if not ocr_text:
 
         return {
@@ -1660,39 +1126,27 @@ def ocr_node(
             "route": "ocr",
 
             "answer": (
-                "No image text is available. "
-                "Please upload an image first."
+                "No image text is available."
             ),
 
             "sources": [],
         }
 
-    history_text = build_history_text(
-        history
-    )
-
-    # =====================================================
-    # OCR PROMPT
-    # =====================================================
-
     prompt = f"""
-You are answering a question about an uploaded image.
+Answer the user's question using ONLY
+the OCR text below.
 
-IMAGE OCR TEXT:
+OCR:
 {ocr_text}
 
-CONVERSATION HISTORY:
-{history_text}
+HISTORY:
+{build_history_text(history)}
 
-USER QUESTION:
+QUESTION:
 {query}
-
-Answer ONLY using the OCR text.
 
 If the answer is not present in the OCR text,
 say that it cannot be found in the image.
-
-Do not use outside knowledge.
 """
 
     try:
@@ -1713,8 +1167,7 @@ Do not use outside knowledge.
         )
 
         answer = (
-            "I couldn't generate an answer "
-            "from the image."
+            "I couldn't answer from the image."
         )
 
     return {
@@ -1726,98 +1179,3 @@ Do not use outside knowledge.
 
         "sources": [],
     }
-
-
-# =========================================================
-# ROUTE EXECUTION
-# =========================================================
-#
-# This function is kept for compatibility if your graph
-# or another module imports it.
-#
-# =========================================================
-
-def route_node(
-    state: AgentState,
-) -> AgentState:
-
-    route = (
-        state.get(
-            "route",
-            "general",
-        )
-        or "general"
-    ).strip().lower()
-
-    print(
-        "[ROUTE NODE] Executing:",
-        route,
-    )
-
-    # =====================================================
-    # PDF RAG
-    # =====================================================
-
-    if route == "rag":
-
-        return rag_node(
-            state
-        )
-
-    # =====================================================
-    # WEB RAG
-    # =====================================================
-
-    if route == "web_rag":
-
-        return web_rag_node(
-            state
-        )
-
-    # =====================================================
-    # NORMAL WEB
-    # =====================================================
-
-    if route == "web":
-
-        return web_node(
-            state
-        )
-
-    # =====================================================
-    # WEATHER
-    # =====================================================
-
-    if route == "weather":
-
-        return weather_node(
-            state
-        )
-
-    # =====================================================
-    # OCR
-    # =====================================================
-
-    if route == "ocr":
-
-        return ocr_node(
-            state
-        )
-
-    # =====================================================
-    # GREETING
-    # =====================================================
-
-    if route == "greeting":
-
-        return greeting_node(
-            state
-        )
-
-    # =====================================================
-    # GENERAL
-    # =====================================================
-
-    return general_node(
-        state
-    )

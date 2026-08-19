@@ -1,66 +1,45 @@
-from typing import TypedDict
+from __future__ import annotations
+
+from typing import TypedDict, Any
 
 
 class AgentState(TypedDict, total=False):
 
-    # =====================================================
-    # USER QUERY
-    # =====================================================
-
+    # Current request
     query: str
 
-    # =====================================================
-    # PDF RAG
-    # =====================================================
-
-    selected_document: str
-
-    document_context: bool
-
-    # =====================================================
-    # WEB RAG
-    #
-    # URL supplied by the user.
-    #
-    # Example:
-    # https://example.com/article
-    # =====================================================
-
-    web_url: str
-
-    web_context: bool
-
-    # =====================================================
-    # OCR
-    # =====================================================
-
-    ocr_text: str
-
-    # =====================================================
-    # CONVERSATION HISTORY
-    # =====================================================
-
+    # Conversation
     history: list[dict]
 
-    # =====================================================
-    # AGENT OUTPUT
-    # =====================================================
-
+    # Output
     answer: str
-
     sources: list[dict]
-
     route: str
 
-    # =====================================================
-    # OPTIONAL WEB RAG DATA
-    #
-    # These fields will be populated when a URL is
-    # scraped and indexed.
-    # =====================================================
+    # PDF / Knowledge Base
+    selected_document: str
+    document_context: bool
 
+    # Web RAG
+    web_url: str
+    web_context: bool
+
+    # OCR
+    ocr_text: str
+
+    # RAG metadata
+    relevance_score: float
+    rag_found: bool
+
+    # Web metadata
     web_title: str
+    web_scraper: str
+    web_chunks: int
+    web_indexed: bool
+    web_relevance_score: float
 
-    web_chunks: list[dict]
-
-    web_sources: list[dict]
+    # Misc
+    fallback_reason: str
+    error: str
+    input_type: str
+    audio: Any

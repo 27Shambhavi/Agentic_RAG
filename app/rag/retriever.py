@@ -1,27 +1,16 @@
+from __future__ import annotations
+
 from app.rag.embeddings import embedding_model
 from app.rag.pinecone_client import pinecone_client
 
 
-def normalize_filename(name: str) -> str:
-    return (
-        str(name or "")
-        .strip()
-        .lower()
-    )
-
-
 def retrieve(
     query: str,
-    top_k: int = 5,
-    selected_document: str = "",
+    top_k: int = 8,
 ) -> list[dict]:
 
     query = (
         query or ""
-    ).strip()
-
-    selected_document = (
-        selected_document or ""
     ).strip()
 
     if not query:
@@ -37,8 +26,7 @@ def retrieve(
     )
 
     print(
-        "Selected document:",
-        selected_document or "NONE",
+        "Mode: ENTIRE DOCUMENT KNOWLEDGE BASE"
     )
 
     # =====================================================
@@ -47,8 +35,10 @@ def retrieve(
 
     try:
 
-        query_vector = embedding_model.embed_text(
-            query
+        query_vector = (
+            embedding_model.embed_text(
+                query
+            )
         )
 
     except Exception as error:
@@ -60,17 +50,8 @@ def retrieve(
 
         return []
 
-    print(
-        "Query vector dimension:",
-        len(query_vector),
-    )
-
     # =====================================================
-    # PINECONE QUERY
-    #
-    # IMPORTANT:
-    # Query the index directly because this is the
-    # confirmed working Pinecone path.
+    # CANDIDATES
     # =====================================================
 
     candidate_k = max(
@@ -80,11 +61,17 @@ def retrieve(
 
     try:
 
-        result = pinecone_client.index.query(
-            vector=query_vector,
-            top_k=candidate_k,
-            namespace="default",
-            include_metadata=True,
+        result = (
+            pinecone_client.index.query(
+
+                vector=query_vector,
+
+                top_k=candidate_k,
+
+                namespace="default",
+
+                include_metadata=True,
+            )
         )
 
     except Exception as error:
@@ -96,13 +83,29 @@ def retrieve(
 
         return []
 
-    matches = (
-        result.get(
-            "matches",
-            [],
+    if isinstance(
+        result,
+        dict,
+    ):
+
+        matches = (
+            result.get(
+                "matches",
+                [],
+            )
+            or []
         )
-        or []
-    )
+
+    else:
+
+        matches = (
+            getattr(
+                result,
+                "matches",
+                [],
+            )
+            or []
+        )
 
     print(
         "Pinecone candidates:",
@@ -110,76 +113,109 @@ def retrieve(
     )
 
     # =====================================================
-    # NORMALIZE SELECTED DOCUMENT
-    # =====================================================
-
-    selected_normalized = normalize_filename(
-        selected_document
-    )
-
-    print(
-        "Normalized selected document:",
-        repr(selected_normalized),
-    )
-
-    # =====================================================
-    # FILTER DOCUMENT
+    # BUILD DOCUMENT RESULTS
     # =====================================================
 
     documents = []
 
     for match in matches:
 
-        metadata = (
-            match.get(
-                "metadata",
-                {},
-            )
-            or {}
-        )
+        if isinstance(
+            match,
+            dict,
+        ):
 
-        source = str(
+            metadata = (
+                match.get(
+                    "metadata",
+                    {},
+                )
+                or {}
+            )
+
+            match_id = (
+                match.get(
+                    "id",
+                    "",
+                )
+                or ""
+            )
+
+            raw_score = (
+                match.get(
+                    "score",
+                    0.0,
+                )
+            )
+
+        else:
+
+            metadata = (
+                getattr(
+                    match,
+                    "metadata",
+                    {},
+                )
+                or {}
+            )
+
+            match_id = (
+                getattr(
+                    match,
+                    "id",
+                    "",
+                )
+                or ""
+            )
+
+            raw_score = (
+                getattr(
+                    match,
+                    "score",
+                    0.0,
+                )
+            )
+
+        if not isinstance(
+            metadata,
+            dict,
+        ):
+            continue
+
+        # -------------------------------------------------
+        # EXCLUDE WEB VECTORS
+        # -------------------------------------------------
+
+        content_type = str(
             metadata.get(
-                "source",
+                "type",
                 "",
             )
-        ).strip()
+            or ""
+        ).strip().lower()
+
+        if content_type == "web":
+            continue
+
+        # -------------------------------------------------
+        # TEXT
+        # -------------------------------------------------
 
         text = str(
             metadata.get(
                 "text",
                 "",
             )
+            or ""
         ).strip()
 
         if not text:
             continue
 
-        source_normalized = normalize_filename(
-            source
-        )
-
-        # -------------------------------------------------
-        # SELECTED DOCUMENT FILTER
-        # -------------------------------------------------
-
-        if selected_normalized:
-
-            if source_normalized != selected_normalized:
-
-                continue
-
-        # -------------------------------------------------
-        # ADD DOCUMENT
-        # -------------------------------------------------
-
         try:
 
             score = float(
-                match.get(
-                    "score",
-                    0.0,
-                )
+                raw_score
             )
 
         except (
@@ -191,16 +227,16 @@ def retrieve(
 
         documents.append(
             {
-                "id": match.get(
-                    "id",
-                    "",
-                ),
+                "id": match_id,
 
                 "text": text,
 
-                "source": (
-                    source
-                    or selected_document
+                "source": str(
+                    metadata.get(
+                        "source",
+                        "",
+                    )
+                    or ""
                 ),
 
                 "page": metadata.get(
@@ -208,12 +244,28 @@ def retrieve(
                     "",
                 ),
 
+                "title": str(
+                    metadata.get(
+                        "title",
+                        "",
+                    )
+                    or ""
+                ),
+
+                "document_id": str(
+                    metadata.get(
+                        "document_id",
+                        "",
+                    )
+                    or ""
+                ),
+
                 "score": score,
             }
         )
 
     # =====================================================
-    # SORT BY RELEVANCE
+    # SORT
     # =====================================================
 
     documents.sort(
@@ -224,27 +276,16 @@ def retrieve(
         reverse=True,
     )
 
-    # =====================================================
-    # TOP K
-    # =====================================================
-
-    documents = documents[:top_k]
+    documents = documents[
+        :top_k
+    ]
 
     # =====================================================
     # DEBUG
     # =====================================================
 
     print(
-        "\n------------- RAG MATCHES -------------"
-    )
-
-    print(
-        "Selected document:",
-        selected_document,
-    )
-
-    print(
-        "Selected document matches:",
+        "Knowledge-base matches:",
         len(documents),
     )
 
@@ -256,16 +297,12 @@ def retrieve(
         print(
             f"[{index}] "
             f"SCORE={document['score']:.4f} "
-            f"SOURCE={repr(document['source'])} "
+            f"SOURCE={document['source']} "
             f"PAGE={document['page']}"
         )
 
     print(
-        "----------------------------------------"
-    )
-
-    print(
-        "===========================================\n"
+        "============================================\n"
     )
 
     return documents

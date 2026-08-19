@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from langgraph.graph import (
@@ -20,26 +22,10 @@ from app.agents.nodes import (
 )
 
 
-# =========================================================
-# VALID ROUTES
-# =========================================================
-#
-# These MUST match the routes supported by supervisor.py.
-#
-# IMPORTANT:
-#
-# web       = normal Web Search
-#
-# web_rag   = user-provided URL -> Web RAG
-#
-# They are two completely different routes.
-#
-# =========================================================
-
 VALID_ROUTES = {
     "rag",
-    "web_rag",
     "web",
+    "web_rag",
     "weather",
     "ocr",
     "greeting",
@@ -48,32 +34,15 @@ VALID_ROUTES = {
 
 
 # =========================================================
-# ROUTE AFTER SUPERVISOR
-# =========================================================
-#
-# IMPORTANT:
-#
-# The supervisor decides the route.
-#
-# graph.py ONLY executes that route.
-#
-# graph.py MUST NOT:
-#
-# - inspect URLs
-# - run another classifier
-# - convert web_rag -> web
-# - inspect documents
-# - inspect greetings
-# - inspect weather
-#
+# SUPERVISOR -> EXECUTION
 # =========================================================
 
 def route_after_supervisor(
     state: AgentState,
 ) -> Literal[
     "rag",
-    "web_rag",
     "web",
+    "web_rag",
     "weather",
     "ocr",
     "greeting",
@@ -97,60 +66,32 @@ def route_after_supervisor(
         .replace("'", "")
     )
 
-    # =====================================================
-    # BACKWARD COMPATIBILITY
-    # =====================================================
-    #
-    # These are only old aliases.
-    #
-    # CRITICAL:
-    #
-    # web_rag MUST NOT be converted to web.
-    #
-    # web_rag is now a real execution route.
-    #
-    # =====================================================
+    aliases = {
+        "document": "rag",
+        "document_rag": "rag",
+        "knowledge": "rag",
+    }
 
-    if route == "document_rag":
-
-        route = "rag"
-
-    elif route == "document":
-
-        route = "rag"
-
-    elif route == "knowledge":
-
-        route = "rag"
-
-    # =====================================================
-    # VALIDATE
-    # =====================================================
+    route = aliases.get(
+        route,
+        route,
+    )
 
     if route not in VALID_ROUTES:
 
         print(
-            "[GRAPH] Invalid supervisor route:",
+            "[GRAPH] Invalid route:",
             route,
         )
 
         route = "general"
-
-    # =====================================================
-    # DEBUG
-    # =====================================================
 
     print(
         "\n================ GRAPH ================"
     )
 
     print(
-        "Supervisor selected:",
-        route,
-    )
-
-    print(
-        "Executing node:",
+        "Supervisor route:",
         route,
     )
 
@@ -162,7 +103,40 @@ def route_after_supervisor(
 
 
 # =========================================================
-# GRAPH
+# RAG -> END / WEB
+# =========================================================
+
+def route_after_rag(
+    state: AgentState,
+) -> Literal[
+    "end",
+    "web",
+]:
+
+    rag_found = bool(
+        state.get(
+            "rag_found",
+            False,
+        )
+    )
+
+    if rag_found:
+
+        print(
+            "[GRAPH] RAG SUCCESS -> END"
+        )
+
+        return "end"
+
+    print(
+        "[GRAPH] RAG NOT FOUND -> WEB"
+    )
+
+    return "web"
+
+
+# =========================================================
+# BUILD
 # =========================================================
 
 builder = StateGraph(
@@ -171,7 +145,7 @@ builder = StateGraph(
 
 
 # =========================================================
-# SUPERVISOR
+# NODES
 # =========================================================
 
 builder.add_node(
@@ -179,105 +153,35 @@ builder.add_node(
     supervisor,
 )
 
-
-# =========================================================
-# EXECUTION NODES
-# =========================================================
-
-# ---------------------------------------------------------
-# PDF RAG
-# ---------------------------------------------------------
-
 builder.add_node(
     "rag",
     rag_node,
 )
-
-
-# ---------------------------------------------------------
-# NORMAL WEB SEARCH
-# ---------------------------------------------------------
-#
-# User asks:
-#
-# "latest AI news"
-# "search the web for..."
-#
-# -> web
-#
-# ---------------------------------------------------------
 
 builder.add_node(
     "web",
     web_node,
 )
 
-
-# ---------------------------------------------------------
-# WEB RAG
-# ---------------------------------------------------------
-#
-# User provides:
-#
-# https://www.example.com
-#
-# -> web_rag
-#
-# URL
-#   ↓
-# scrape
-#   ↓
-# clean
-#   ↓
-# chunk
-#   ↓
-# embed
-#   ↓
-# retrieve
-#   ↓
-# LLM
-#
-# ---------------------------------------------------------
-
 builder.add_node(
     "web_rag",
     web_rag_node,
 )
-
-
-# ---------------------------------------------------------
-# WEATHER
-# ---------------------------------------------------------
 
 builder.add_node(
     "weather",
     weather_node,
 )
 
-
-# ---------------------------------------------------------
-# OCR
-# ---------------------------------------------------------
-
 builder.add_node(
     "ocr",
     ocr_node,
 )
 
-
-# ---------------------------------------------------------
-# GREETING
-# ---------------------------------------------------------
-
 builder.add_node(
     "greeting",
     greeting_node,
 )
-
-
-# ---------------------------------------------------------
-# GENERAL AI
-# ---------------------------------------------------------
 
 builder.add_node(
     "general",
@@ -296,24 +200,11 @@ builder.add_edge(
 
 
 # =========================================================
-# SUPERVISOR → EXECUTION
-# =========================================================
-#
-# IMPORTANT:
-#
-# Every supervisor route has its own execution node.
-#
-# In particular:
-#
-#     web_rag -> web_rag
-#
-# NOT:
-#
-#     web_rag -> web
-#
+# SUPERVISOR ROUTING
 # =========================================================
 
 builder.add_conditional_edges(
+
     "supervisor",
 
     route_after_supervisor,
@@ -321,9 +212,9 @@ builder.add_conditional_edges(
     {
         "rag": "rag",
 
-        "web_rag": "web_rag",
-
         "web": "web",
+
+        "web_rag": "web_rag",
 
         "weather": "weather",
 
@@ -337,44 +228,51 @@ builder.add_conditional_edges(
 
 
 # =========================================================
-# EXECUTION → END
+# RAG FALLBACK
 # =========================================================
 
-builder.add_edge(
+builder.add_conditional_edges(
+
     "rag",
-    END,
+
+    route_after_rag,
+
+    {
+        "end": END,
+
+        "web": "web",
+    },
 )
 
 
-builder.add_edge(
-    "web_rag",
-    END,
-)
-
+# =========================================================
+# OTHER NODES
+# =========================================================
 
 builder.add_edge(
     "web",
     END,
 )
 
+builder.add_edge(
+    "web_rag",
+    END,
+)
 
 builder.add_edge(
     "weather",
     END,
 )
 
-
 builder.add_edge(
     "ocr",
     END,
 )
 
-
 builder.add_edge(
     "greeting",
     END,
 )
-
 
 builder.add_edge(
     "general",
@@ -387,3 +285,7 @@ builder.add_edge(
 # =========================================================
 
 agent = builder.compile()
+
+print(
+    "[GRAPH] Agent graph compiled successfully."
+)

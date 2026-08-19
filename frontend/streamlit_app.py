@@ -224,55 +224,85 @@ elif active_feature == "Document RAG":
         "Upload documents and ask questions grounded in your knowledge base.",
     )
 
-    left_col, right_col = st.columns(
-        [2.1, 1],
+    # =====================================================
+    # CENTER CONTENT
+    # =====================================================
+
+    left_spacer, center, right_spacer = st.columns(
+        [1, 3, 1],
         gap="large",
     )
 
-    with left_col:
+    with center:
 
-        st.markdown(
-            '<div class="section-title">＋ Add Knowledge</div>',
-            unsafe_allow_html=True,
-        )
+        # =================================================
+        # ADD KNOWLEDGE
+        # =================================================
 
-        st.markdown(
-            '<div class="section-subtitle">'
-            'Upload PDF, DOCX, or TXT documents.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        with st.container(
+            border=True
+        ):
 
-        render_document_upload()
+            st.markdown(
+                '<div class="section-title">'
+                '＋ Add Knowledge'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
-    with right_col:
+            st.markdown(
+                '<div class="section-subtitle">'
+                'Upload PDF, DOCX, or TXT documents.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
-        st.markdown(
-            '<div class="section-title">📚 Knowledge Library</div>',
-            unsafe_allow_html=True,
-        )
+            render_document_upload()
 
-        st.markdown(
-            '<div class="section-subtitle">'
-            'Your indexed documents.'
-            '</div>',
-            unsafe_allow_html=True,
-        )
+        st.divider()
 
-        render_document_library()
+        # =================================================
+        # KNOWLEDGE LIBRARY
+        # =================================================
 
-    st.divider()
+        with st.container(
+            border=True
+        ):
 
-    st.markdown(
-        '<div class="section-title">💬 Ask your documents</div>',
-        unsafe_allow_html=True,
-    )
+            st.markdown(
+                '<div class="section-title">'
+                '📚 Knowledge Library'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
-    with st.container(
-        border=True,
-    ):
+            st.markdown(
+                '<div class="section-subtitle">'
+                'Your indexed documents.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
 
-        render_chat()
+            render_document_library()
+
+        st.divider()
+
+        # =================================================
+        # CHAT
+        # =================================================
+
+        with st.container(
+            border=True
+        ):
+
+            st.markdown(
+                '<div class="section-title">'
+                '💬 Ask your documents'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+            render_chat()
 
 
 # =========================================================
