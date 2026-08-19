@@ -1,8 +1,4 @@
 # 🤖 Agentic RAG Space — Multimodal AI Knowledge Assistant
-
-> An **Agentic Retrieval-Augmented Generation (RAG) system** that intelligently routes user queries across document RAG, Web RAG, general AI, OCR, voice, weather, and conversational capabilities.
----
-
 [![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-FF4B4B?logo=streamlit)](https://streamlit.io/)
