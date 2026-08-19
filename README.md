@@ -1,12 +1,21 @@
-# 🤖 Agentic RAG Space — Multimodal AI Knowledge Assistant
-[![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-Frontend-FF4B4B?logo=streamlit)](https://streamlit.io/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Agentic%20Workflow-purple)](https://langchain-ai.github.io/langgraph/)
-[![Pinecone](https://img.shields.io/badge/Pinecone-Vector%20DB-000000)](https://www.pinecone.io/)
-[![Gemini](https://img.shields.io/badge/Google-Gemini-blue)](https://ai.google.dev/)
+# 🤖 Agentic RAG Space
 
-> A modular, multimodal AI assistant that intelligently decides whether a question should be answered from a knowledge base, a user-provided webpage, live web search, OCR, weather tools, or general AI.
+### Agentic AI Assistant with Multi-Document RAG, Web RAG, Live Web Search & Multimodal Interaction
+
+<p align="center">
+
+  <img src="https://img.shields.io/badge/Python-3.x-blue?logo=python" />
+  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi" />
+  <img src="https://img.shields.io/badge/Streamlit-Frontend-FF4B4B?logo=streamlit" />
+  <img src="https://img.shields.io/badge/LangGraph-Agentic%20AI-purple" />
+  <img src="https://img.shields.io/badge/Pinecone-Vector%20DB-black" />
+  <img src="https://img.shields.io/badge/Google-Gemini-blue" />
+
+</p>
+
+<p align="center">
+  <b>A modular, multimodal AI assistant that intelligently decides whether a question should be answered from a knowledge base, a user-provided webpage, live web search, OCR, weather tools, or general AI.</b>
+</p>
 
 ---
 
@@ -35,26 +44,6 @@ The main goal was to build a RAG system that is not locked to one document
 or one retrieval path, but can dynamically choose the most relevant
 knowledge source while maintaining conversational context.
 
-# 🤖 Agentic RAG Space
-
-### Agentic AI Assistant with Multi-Document RAG, Web RAG, Live Web Search & Multimodal Interaction
-
-<p align="center">
-
-  <img src="https://img.shields.io/badge/Python-3.x-blue?logo=python" />
-  <img src="https://img.shields.io/badge/FastAPI-Backend-009688?logo=fastapi" />
-  <img src="https://img.shields.io/badge/Streamlit-Frontend-FF4B4B?logo=streamlit" />
-  <img src="https://img.shields.io/badge/LangGraph-Agentic%20AI-purple" />
-  <img src="https://img.shields.io/badge/Pinecone-Vector%20DB-black" />
-  <img src="https://img.shields.io/badge/Google-Gemini-blue" />
-
-</p>
-
-<p align="center">
-  <b>A modular, multimodal AI assistant that intelligently decides whether a question should be answered from a knowledge base, a user-provided webpage, live web search, OCR, weather tools, or general AI.</b>
-</p>
-
----
 
 # 🌟 Overview
 
