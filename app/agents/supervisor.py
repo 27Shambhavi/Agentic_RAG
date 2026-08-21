@@ -3,127 +3,188 @@ from __future__ import annotations
 import re
 
 from app.agents.state import AgentState
-from app.agents.classifier import classify_intent
+from app.agents.prompts import SUPERVISOR_PROMPT
+from app.llm.gemini import llm
 
+
+# =========================================================
+# VALID ROUTES
+# =========================================================
 
 VALID_ROUTES = {
     "greeting",
     "rag",
     "web",
     "web_rag",
-    "weather",
     "general",
+    "weather",
     "ocr",
 }
 
 
-URL_PATTERN = re.compile(
-    r"https?://[^\s<>'\"`]+",
-    re.IGNORECASE,
-)
+# =========================================================
+# BUILD CONVERSATION HISTORY
+# =========================================================
 
-
-def extract_url(
-    query: str,
+def build_history(
+    history: list[dict],
 ) -> str:
 
-    query = (
-        query or ""
-    ).strip()
+    parts: list[str] = []
 
-    if not query:
+    for message in history[-8:]:
+
+        if not isinstance(message, dict):
+            continue
+
+        role = str(
+            message.get(
+                "role",
+                "user",
+            )
+            or "user"
+        ).strip().upper()
+
+        content = str(
+            message.get(
+                "content",
+                "",
+            )
+            or ""
+        ).strip()
+
+        if content:
+            parts.append(
+                f"{role}: {content}"
+            )
+
+    if not parts:
+        return "No previous conversation."
+
+    return "\n".join(parts)
+
+
+# =========================================================
+# NORMALIZE STRING
+# =========================================================
+
+def safe_string(
+    value,
+) -> str:
+
+    if value is None:
         return ""
 
-    match = URL_PATTERN.search(
-        query
+    return str(value).strip()
+
+
+# =========================================================
+# EXTRACT ROUTE
+# =========================================================
+
+def extract_route(
+    output: str,
+) -> str:
+
+    output = safe_string(output).lower()
+
+    # -----------------------------------------------------
+    # Remove markdown formatting / whitespace
+    # -----------------------------------------------------
+
+    output = re.sub(
+        r"[^a-z_]",
+        "",
+        output,
     )
 
-    if not match:
-        return ""
+    # -----------------------------------------------------
+    # Direct valid route
+    # -----------------------------------------------------
 
-    return (
-        match.group(0)
-        .strip()
-        .rstrip(
-            ".,!?;:)]}"
-        )
-    )
+    if output in VALID_ROUTES:
+        return output
 
+    # -----------------------------------------------------
+    # Sometimes an LLM may return additional text.
+    #
+    # Search for a valid route inside the response.
+    # -----------------------------------------------------
 
-def is_explicit_web_request(
-    query: str,
-) -> bool:
+    for route in VALID_ROUTES:
 
-    q = (
-        query or ""
-    ).strip().lower()
+        if route in output:
+            return route
 
-    patterns = (
-        "search the web",
-        "search web",
-        "search the internet",
-        "search internet",
-        "search online",
-        "look it up online",
-        "look it up on the internet",
-        "find it online",
-        "google it",
-        "google this",
-        "browse the web",
-        "browse online",
-        "latest news",
-        "latest update",
-        "latest information",
-        "today's news",
-        "today news",
-        "current news",
-        "breaking news",
-        "recent news",
-        "what happened today",
-        "what is happening today",
-        "current information",
-        "current status",
-        "current update",
-        "live information",
-    )
+    # -----------------------------------------------------
+    # Safe fallback
+    # -----------------------------------------------------
 
-    return any(
-        pattern in q
-        for pattern in patterns
-    )
+    return "general"
 
 
-def supervisor(
+# =========================================================
+# SUPERVISOR NODE
+# =========================================================
+
+def supervisor_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    # =====================================================
+    # CURRENT QUERY
+    # =====================================================
+
+    query = safe_string(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
-    selected_document = (
+    # =====================================================
+    # SELECTED DOCUMENT
+    # =====================================================
+
+    selected_document = safe_string(
         state.get(
             "selected_document",
             "",
         )
-        or ""
-    ).strip()
-
-    document_context = bool(
-        selected_document
     )
 
-    ocr_text = (
+    # =====================================================
+    # ACTIVE WEB URL
+    # =====================================================
+
+    active_web_url = safe_string(
         state.get(
-            "ocr_text",
+            "active_web_url",
             "",
         )
-        or ""
-    ).strip()
+        or state.get(
+            "web_url",
+            "",
+        )
+    )
+
+    # =====================================================
+    # DOCUMENT CONTEXT
+    # =====================================================
+
+    document_context = state.get(
+        "document_context",
+        False,
+    )
+
+    # Make sure this is a real boolean.
+    document_context = bool(
+        document_context
+    )
+
+    # =====================================================
+    # HISTORY
+    # =====================================================
 
     history = state.get(
         "history",
@@ -136,30 +197,63 @@ def supervisor(
     ):
         history = []
 
-    web_url = (
-        state.get(
-            "web_url",
-            "",
-        )
-        or ""
-    ).strip()
-
-    web_context = bool(
-        web_url
+    history_text = build_history(
+        history
     )
 
-    if not query:
+    # =====================================================
+    # BUILD SUPERVISOR PROMPT
+    # =====================================================
+
+    try:
+
+        prompt = SUPERVISOR_PROMPT.format(
+            selected_document=(
+                selected_document
+                or "NONE"
+            ),
+
+            document_context=(
+                str(document_context)
+            ),
+
+            active_web_url=(
+                active_web_url
+                or "NONE"
+            ),
+
+            history=history_text,
+
+            query=(
+                query
+                or "EMPTY"
+            ),
+        )
+
+    except KeyError as error:
+
+        # -------------------------------------------------
+        # If prompts.py does not contain active_web_url
+        # or another placeholder, don't crash the API.
+        # -------------------------------------------------
+
+        print(
+            "[SUPERVISOR PROMPT ERROR]",
+            repr(error),
+        )
 
         return {
             **state,
             "route": "general",
-            "answer": "",
-            "sources": [],
+            "error": (
+                f"Supervisor prompt formatting failed: "
+                f"{error}"
+            ),
         }
 
-    detected_url = extract_url(
-        query
-    )
+    # =====================================================
+    # LOG
+    # =====================================================
 
     print(
         "\n================ SUPERVISOR ================"
@@ -171,238 +265,158 @@ def supervisor(
     )
 
     print(
-        "Selected PDF:",
+        "Active URL:",
+        active_web_url or "NONE",
+    )
+
+    print(
+        "Selected document:",
         selected_document or "NONE",
     )
 
     print(
-        "Existing Web URL:",
-        web_url or "NONE",
+        "Document context:",
+        document_context,
     )
 
     print(
-        "Current URL:",
-        detected_url or "NONE",
+        "============================================"
     )
 
     # =====================================================
-    # 1. CURRENT URL
-    # =====================================================
-    #
-    # Explicit URL always means Web RAG.
-    #
-    # =====================================================
-
-    if detected_url:
-
-        print(
-            "[SUPERVISOR] Current URL -> WEB_RAG"
-        )
-
-        return {
-            **state,
-
-            "route": "web_rag",
-
-            "web_url": detected_url,
-
-            "web_context": True,
-        }
-
-    # =====================================================
-    # 2. EXPLICIT NORMAL WEB SEARCH
-    # =====================================================
-
-    if is_explicit_web_request(
-        query
-    ):
-
-        print(
-            "[SUPERVISOR] Explicit web request -> WEB"
-        )
-
-        return {
-            **state,
-
-            "route": "web",
-
-            # Preserve URL in state.
-            "web_url": web_url,
-
-            "web_context": False,
-        }
-
-    # =====================================================
-    # 3. CLASSIFIER
-    # =====================================================
-    #
-    # Classifier decides:
-    #
-    # greeting
-    # weather
-    # ocr
-    # rag
-    # web
-    # web_rag
-    # general
-    #
+    # LLM ROUTING
     # =====================================================
 
     try:
 
-        route = classify_intent(
-
-            query=query,
-
-            history=history,
-
-            ocr_text=ocr_text,
-
-            selected_document=selected_document,
-
-            document_context=document_context,
-
-            web_url=web_url,
-
-            web_context=web_context,
+        raw_route = llm.generate(
+            prompt
         )
+
+        route = extract_route(
+            raw_route
+        )
+
+        routing_method = "LLM"
 
     except Exception as error:
 
         print(
-            "[SUPERVISOR CLASSIFIER ERROR]",
+            "[SUPERVISOR LLM ERROR]",
             repr(error),
         )
 
-        route = "web"
+        # -------------------------------------------------
+        # Safe fallback
+        # -------------------------------------------------
 
-    route = (
-        str(route or "web")
-        .strip()
-        .lower()
-        .replace("`", "")
-        .replace('"', "")
-        .replace("'", "")
-    )
+        route = "general"
 
-    # =====================================================
-    # 4. ACTIVE PDF
-    # =====================================================
-    #
-    # If PDF exists and classifier says normal knowledge,
-    # RAG gets first chance.
-    #
-    # If RAG fails, GRAPH -> WEB.
-    #
-    # =====================================================
+        routing_method = "FALLBACK"
 
-    if selected_document:
-
-        if route in {
-            "greeting",
-            "weather",
-            "ocr",
-            "general",
-        }:
-
-            final_route = route
-
-        elif route == "web":
-
-            final_route = "web"
-
-        else:
-
-            final_route = "rag"
-
-        print(
-            "[SUPERVISOR] PDF active ->",
-            final_route,
-        )
-
-        return {
+        state = {
             **state,
 
-            "route": final_route,
-
-            "selected_document": selected_document,
-
-            "document_context": True,
-
-            # Preserve old URL.
-            #
-            # But do not activate Web RAG while PDF
-            # is the active context.
-            "web_url": web_url,
-
-            "web_context": False,
-        }
-
-    # =====================================================
-    # 5. ACTIVE WEBPAGE
-    # =====================================================
-    #
-    # Classifier decides:
-    #
-    # related -> web_rag
-    # unrelated -> web
-    #
-    # =====================================================
-
-    if web_url:
-
-        if route == "web_rag":
-
-            final_route = "web_rag"
-
-        else:
-
-            final_route = "web"
-
-        print(
-            "[SUPERVISOR] Existing webpage ->",
-            final_route,
-        )
-
-        return {
-            **state,
-
-            "route": final_route,
-
-            "web_url": web_url,
-
-            "web_context": (
-                final_route == "web_rag"
+            "llm_error": str(
+                error
             ),
         }
 
     # =====================================================
-    # 6. NO ACTIVE CONTEXT
+    # FINAL ROUTE LOG
     # =====================================================
 
-    if route not in VALID_ROUTES:
-
-        route = "web"
+    print(
+        "\n================ SUPERVISOR ================"
+    )
 
     print(
-        "[SUPERVISOR] FINAL ROUTE:",
+        "Query:",
+        query,
+    )
+
+    print(
+        "Active URL:",
+        active_web_url or "NONE",
+    )
+
+    print(
+        "Selected document:",
+        selected_document or "NONE",
+    )
+
+    print(
+        "Route:",
         route,
     )
+
+    print(
+        "Routing method:",
+        routing_method,
+    )
+
+    print(
+        "============================================\n"
+    )
+
+    # =====================================================
+    # RETURN STATE
+    # =====================================================
 
     return {
         **state,
 
-        "route": route,
+        "query": query,
 
-        "selected_document": "",
+        "selected_document": (
+            selected_document
+        ),
 
-        "document_context": False,
+        "active_web_url": (
+            active_web_url
+        ),
 
-        "web_url": "",
-
-        "web_context": False,
-
-        "ocr_text": ocr_text,
+        "document_context": (
+            document_context
+        ),
 
         "history": history,
+
+        "route": route,
     }
+
+
+# =========================================================
+# COMPATIBILITY ALIAS
+# =========================================================
+#
+# graph.py currently imports:
+#
+# from app.agents.supervisor import supervisor
+#
+# Therefore expose `supervisor`.
+#
+# =========================================================
+
+supervisor = supervisor_node
+
+
+# =========================================================
+# ROUTE FROM SUPERVISOR
+# =========================================================
+
+def route_from_supervisor(
+    state: AgentState,
+) -> str:
+
+    route = safe_string(
+        state.get(
+            "route",
+            "general",
+        )
+    ).lower()
+
+    if route not in VALID_ROUTES:
+        return "general"
+
+    return route

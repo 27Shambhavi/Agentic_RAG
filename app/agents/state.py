@@ -1,45 +1,78 @@
 from __future__ import annotations
 
-from typing import TypedDict, Any
+from typing import Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
 
-    # Current request
+    # ========================================================
+    # CURRENT REQUEST
+    # ========================================================
+
     query: str
 
-    # Conversation
+    # ========================================================
+    # CONVERSATION
+    # ========================================================
+
     history: list[dict]
 
-    # Output
+    # ========================================================
+    # FINAL OUTPUT
+    # ========================================================
+
     answer: str
     sources: list[dict]
     route: str
 
-    # PDF / Knowledge Base
+    # ========================================================
+    # DOCUMENT KNOWLEDGE BASE
+    # ========================================================
+
     selected_document: str
     document_context: bool
 
-    # Web RAG
-    web_url: str
-    web_context: bool
-
-    # OCR
-    ocr_text: str
-
-    # RAG metadata
     relevance_score: float
     rag_found: bool
+    knowledge_found: bool
 
-    # Web metadata
+    # ========================================================
+    # WEB CONTEXT
+    # ========================================================
+
+    web_url: str
+
+    # Persisted/active URL context.
+    active_web_url: str
+
+    # URLs encountered during conversation.
+    web_urls: list[str]
+
+    web_context: bool
     web_title: str
     web_scraper: str
     web_chunks: int
     web_indexed: bool
     web_relevance_score: float
 
-    # Misc
-    fallback_reason: str
-    error: str
+    # ========================================================
+    # OCR
+    # ========================================================
+
+    ocr_text: str
+
+    # ========================================================
+    # INPUT
+    # ========================================================
+
     input_type: str
     audio: Any
+
+    # ========================================================
+    # CONTROL / DEBUG
+    # ========================================================
+
+    fallback_reason: str
+    fallback_to_web: bool
+    llm_error: str
+    error: str

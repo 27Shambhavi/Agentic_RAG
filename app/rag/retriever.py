@@ -4,6 +4,9 @@ from app.rag.embeddings import embedding_model
 from app.rag.pinecone_client import pinecone_client
 
 
+DOCUMENT_NAMESPACE = "default"
+
+
 def retrieve(
     query: str,
     top_k: int = 8,
@@ -26,12 +29,12 @@ def retrieve(
     )
 
     print(
-        "Mode: ENTIRE DOCUMENT KNOWLEDGE BASE"
+        "Scope: ENTIRE KNOWLEDGE BASE"
     )
 
-    # =====================================================
+    # ========================================================
     # EMBEDDING
-    # =====================================================
+    # ========================================================
 
     try:
 
@@ -50,9 +53,9 @@ def retrieve(
 
         return []
 
-    # =====================================================
-    # CANDIDATES
-    # =====================================================
+    # ========================================================
+    # RETRIEVE MANY CANDIDATES
+    # ========================================================
 
     candidate_k = max(
         top_k * 10,
@@ -61,17 +64,10 @@ def retrieve(
 
     try:
 
-        result = (
-            pinecone_client.index.query(
-
-                vector=query_vector,
-
-                top_k=candidate_k,
-
-                namespace="default",
-
-                include_metadata=True,
-            )
+        result = pinecone_client.query(
+            vector=query_vector,
+            top_k=candidate_k,
+            namespace=DOCUMENT_NAMESPACE,
         )
 
     except Exception as error:
@@ -106,15 +102,6 @@ def retrieve(
             )
             or []
         )
-
-    print(
-        "Pinecone candidates:",
-        len(matches),
-    )
-
-    # =====================================================
-    # BUILD DOCUMENT RESULTS
-    # =====================================================
 
     documents = []
 
@@ -182,9 +169,9 @@ def retrieve(
         ):
             continue
 
-        # -------------------------------------------------
-        # EXCLUDE WEB VECTORS
-        # -------------------------------------------------
+        # ----------------------------------------------------
+        # Never use WEB vectors for normal PDF RAG.
+        # ----------------------------------------------------
 
         content_type = str(
             metadata.get(
@@ -196,10 +183,6 @@ def retrieve(
 
         if content_type == "web":
             continue
-
-        # -------------------------------------------------
-        # TEXT
-        # -------------------------------------------------
 
         text = str(
             metadata.get(
@@ -228,9 +211,7 @@ def retrieve(
         documents.append(
             {
                 "id": match_id,
-
                 "text": text,
-
                 "source": str(
                     metadata.get(
                         "source",
@@ -238,12 +219,10 @@ def retrieve(
                     )
                     or ""
                 ),
-
                 "page": metadata.get(
                     "page",
                     "",
                 ),
-
                 "title": str(
                     metadata.get(
                         "title",
@@ -251,7 +230,6 @@ def retrieve(
                     )
                     or ""
                 ),
-
                 "document_id": str(
                     metadata.get(
                         "document_id",
@@ -259,14 +237,9 @@ def retrieve(
                     )
                     or ""
                 ),
-
                 "score": score,
             }
         )
-
-    # =====================================================
-    # SORT
-    # =====================================================
 
     documents.sort(
         key=lambda item: item.get(
@@ -279,10 +252,6 @@ def retrieve(
     documents = documents[
         :top_k
     ]
-
-    # =====================================================
-    # DEBUG
-    # =====================================================
 
     print(
         "Knowledge-base matches:",

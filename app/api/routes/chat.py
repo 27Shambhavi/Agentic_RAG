@@ -1,284 +1,17 @@
-# from fastapi import APIRouter, HTTPException
-# from pydantic import BaseModel, Field
+from __future__ import annotations
 
-# from app.agents.graph import agent
+import traceback
+from typing import Any
 
-
-# # =========================================================
-# # ROUTER
-# # =========================================================
-
-# router = APIRouter(
-#     prefix="/api/chat",
-#     tags=["Chat"],
-# )
-
-
-# # =========================================================
-# # REQUEST MODEL
-# # =========================================================
-
-# class ChatRequest(BaseModel):
-
-#     # -----------------------------------------------------
-#     # USER MESSAGE
-#     # -----------------------------------------------------
-
-#     message: str = Field(
-#         ...,
-#         min_length=1,
-#     )
-
-#     # -----------------------------------------------------
-#     # ACTIVE DOCUMENT
-#     # -----------------------------------------------------
-
-#     selected_document: str = ""
-
-#     # -----------------------------------------------------
-#     # DOCUMENT CONTEXT
-#     #
-#     # This tells the backend that a document is currently
-#     # selected/active.
-#     #
-#     # IMPORTANT:
-#     # It does NOT force every question to use RAG.
-#     # The supervisor/classifier decides the route.
-#     # -----------------------------------------------------
-
-#     document_context: bool = False
-
-#     # -----------------------------------------------------
-#     # OCR CONTEXT
-#     #
-#     # Extracted text from the currently processed image.
-#     # This allows follow-up questions about an OCR image.
-#     # -----------------------------------------------------
-
-#     ocr_text: str = ""
-
-#     # -----------------------------------------------------
-#     # CONVERSATION HISTORY
-#     #
-#     # Used to preserve conversational context.
-#     # -----------------------------------------------------
-
-#     history: list[dict] = Field(
-#         default_factory=list
-#     )
-
-
-# # =========================================================
-# # CHAT ENDPOINT
-# # =========================================================
-
-# @router.post("")
-# async def chat(
-#     request: ChatRequest,
-# ):
-
-#     # =====================================================
-#     # CLEAN INPUT
-#     # =====================================================
-
-#     query = request.message.strip()
-
-#     selected_document = (
-#         request.selected_document.strip()
-#     )
-
-#     ocr_text = (
-#         request.ocr_text.strip()
-#     )
-
-
-#     # =====================================================
-#     # VALIDATION
-#     # =====================================================
-
-#     if not query:
-
-#         raise HTTPException(
-#             status_code=400,
-#             detail="Message cannot be empty.",
-#         )
-
-
-#     # =====================================================
-#     # BUILD AGENT STATE
-#     # =====================================================
-
-#     state = {
-
-#         # -------------------------------------------------
-#         # Current user question
-#         # -------------------------------------------------
-
-#         "query": query,
-
-
-#         # -------------------------------------------------
-#         # Active document
-#         # -------------------------------------------------
-
-#         "selected_document": (
-#             selected_document
-#         ),
-
-
-#         # -------------------------------------------------
-#         # Whether a document is active
-#         # -------------------------------------------------
-
-#         "document_context": (
-#             request.document_context
-#         ),
-
-
-#         # -------------------------------------------------
-#         # OCR context
-#         # -------------------------------------------------
-
-#         "ocr_text": (
-#             ocr_text
-#         ),
-
-
-#         # -------------------------------------------------
-#         # Conversation history
-#         # -------------------------------------------------
-
-#         "history": (
-#             request.history
-#         ),
-
-
-#         # -------------------------------------------------
-#         # Clean output fields
-#         # -------------------------------------------------
-
-#         "answer": "",
-
-#         "sources": [],
-
-#         "route": "",
-#     }
-
-
-#     # =====================================================
-#     # RUN AGENT
-#     # =====================================================
-
-#     try:
-
-#         result = agent.invoke(
-#             state
-#         )
-
-
-#     except Exception as error:
-
-#         print(
-#             "\n========================================"
-#         )
-
-#         print(
-#             "CHAT / AGENT ERROR"
-#         )
-
-#         print(
-#             repr(error)
-#         )
-
-#         print(
-#             "========================================\n"
-#         )
-
-
-#         raise HTTPException(
-#             status_code=500,
-#             detail=(
-#                 "Agent failed to process the request."
-#             ),
-#         )
-
-
-#     # =====================================================
-#     # SAFE RESPONSE
-#     # =====================================================
-
-#     if not isinstance(
-#         result,
-#         dict,
-#     ):
-
-#         raise HTTPException(
-#             status_code=500,
-#             detail=(
-#                 "Agent returned an invalid response."
-#             ),
-#         )
-
-
-#     # =====================================================
-#     # RESPONSE
-#     # =====================================================
-
-#     return {
-
-#         # -------------------------------------------------
-#         # FINAL ANSWER
-#         # -------------------------------------------------
-
-#         "answer": result.get(
-#             "answer",
-#             "",
-#         ),
-
-
-#         # -------------------------------------------------
-#         # ROUTE
-#         #
-#         # rag
-#         # web
-#         # general
-#         # greeting
-#         # -------------------------------------------------
-
-#         "route": result.get(
-#             "route",
-#             "general",
-#         ),
-
-
-#         # -------------------------------------------------
-#         # SOURCES
-#         # -------------------------------------------------
-
-#         "sources": result.get(
-#             "sources",
-#             [],
-#         ),
-
-
-#         # -------------------------------------------------
-#         # ACTIVE DOCUMENT
-#         # -------------------------------------------------
-
-#         "selected_document": result.get(
-#             "selected_document",
-#             selected_document,
-#         ),
-#     }
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.agents.graph import agent
 
 
-# =========================================================
+# ============================================================
 # ROUTER
-# =========================================================
+# ============================================================
 
 router = APIRouter(
     prefix="/api/chat",
@@ -286,112 +19,119 @@ router = APIRouter(
 )
 
 
-# =========================================================
+# ============================================================
+# SAFE STRING HELPER
+# ============================================================
+
+def safe_str(value: Any) -> str:
+    """
+    Safely convert any value into a stripped string.
+
+    Handles:
+    - None
+    - strings
+    - numbers
+    - accidental one-item tuples
+    - accidental multi-item tuples
+    """
+
+    if value is None:
+        return ""
+
+    # Handle accidental tuple values.
+    if isinstance(value, tuple):
+
+        if len(value) == 1:
+            value = value[0]
+
+        else:
+            value = " ".join(
+                str(item)
+                for item in value
+                if item is not None
+            )
+
+    return str(value).strip()
+
+
+# ============================================================
 # REQUEST MODEL
-# =========================================================
+# ============================================================
 
 class ChatRequest(BaseModel):
 
-    # =====================================================
+    # --------------------------------------------------------
     # USER MESSAGE
-    # =====================================================
+    # --------------------------------------------------------
 
     message: str = Field(
         ...,
         min_length=1,
     )
 
-    # =====================================================
-    # ACTIVE PDF DOCUMENT
-    # =====================================================
+    # --------------------------------------------------------
+    # PDF DOCUMENT
+    # --------------------------------------------------------
 
     selected_document: str = ""
 
     document_context: bool = False
 
-    # =====================================================
+    # --------------------------------------------------------
     # WEB RAG
-    #
-    # Example:
-    #
-    # web_url:
-    # https://example.com/article
-    #
-    # web_context:
-    # True
-    #
-    # This is different from the normal web-search tool.
-    #
-    # Web RAG:
-    #
-    # URL
-    #   ↓
-    # Scrape
-    #   ↓
-    # Clean
-    #   ↓
-    # Chunk
-    #   ↓
-    # Embed
-    #   ↓
-    # Pinecone
-    #   ↓
-    # Retrieve
-    #   ↓
-    # LLM
-    # =====================================================
+    # --------------------------------------------------------
 
     web_url: str = ""
 
     web_context: bool = False
 
-    # =====================================================
+    # --------------------------------------------------------
     # OCR
-    # =====================================================
+    # --------------------------------------------------------
 
     ocr_text: str = ""
 
-    # =====================================================
+    # --------------------------------------------------------
     # CONVERSATION HISTORY
-    # =====================================================
+    # --------------------------------------------------------
 
     history: list[dict] = Field(
         default_factory=list
     )
 
 
-# =========================================================
+# ============================================================
 # CHAT ENDPOINT
-# =========================================================
+# ============================================================
 
 @router.post("")
 async def chat(
     request: ChatRequest,
 ):
 
-    # =====================================================
+    # ========================================================
     # CLEAN INPUT
-    # =====================================================
+    # ========================================================
 
-    query = (
-        request.message or ""
-    ).strip()
+    query = safe_str(
+        request.message
+    )
 
-    selected_document = (
-        request.selected_document or ""
-    ).strip()
+    selected_document = safe_str(
+        request.selected_document
+    )
 
-    web_url = (
-        request.web_url or ""
-    ).strip()
+    web_url = safe_str(
+        request.web_url
+    )
 
-    ocr_text = (
-        request.ocr_text or ""
-    ).strip()
+    ocr_text = safe_str(
+        request.ocr_text
+    )
 
-    # =====================================================
+    # ========================================================
     # VALIDATION
-    # =====================================================
+    # ========================================================
 
     if not query:
 
@@ -400,38 +140,33 @@ async def chat(
             detail="Message cannot be empty.",
         )
 
-    # =====================================================
-    # DOCUMENT CONTEXT
-    #
-    # Keep backend state consistent.
-    #
-    # If a document name is supplied, document_context
-    # should be considered active.
-    # =====================================================
+    # ========================================================
+    # CONTEXT FLAGS
+    # ========================================================
 
     document_context = bool(
         selected_document
     )
 
-    # =====================================================
-    # WEB CONTEXT
-    #
-    # If a URL is supplied, web context is active.
-    #
-    # This does NOT mean normal web search.
-    #
-    # It means:
-    #
-    # URL -> Web RAG
-    # =====================================================
-
     web_context = bool(
         web_url
     )
 
-    # =====================================================
+    # ========================================================
+    # HISTORY
+    # ========================================================
+
+    history = request.history
+
+    if not isinstance(
+        history,
+        list,
+    ):
+        history = []
+
+    # ========================================================
     # DEBUG
-    # =====================================================
+    # ========================================================
 
     print(
         "\n================ API CHAT ================"
@@ -440,6 +175,11 @@ async def chat(
     print(
         "Message:",
         query,
+    )
+
+    print(
+        "Message type:",
+        type(query).__name__,
     )
 
     print(
@@ -469,80 +209,43 @@ async def chat(
 
     print(
         "History messages:",
-        len(request.history),
+        len(history),
     )
 
     print(
         "=========================================="
     )
 
-    # =====================================================
+    # ========================================================
     # BUILD AGENT STATE
-    # =====================================================
+    # ========================================================
 
     state = {
 
-        # -------------------------------------------------
-        # USER QUERY
-        # -------------------------------------------------
-
         "query": query,
 
-        # -------------------------------------------------
-        # PDF RAG
-        # -------------------------------------------------
+        "selected_document": selected_document,
 
-        "selected_document": (
-            selected_document
-        ),
+        "document_context": document_context,
 
-        "document_context": (
-            document_context
-        ),
+        "web_url": web_url,
 
-        # -------------------------------------------------
-        # WEB RAG
-        # -------------------------------------------------
+        "web_context": web_context,
 
-        "web_url": (
-            web_url
-        ),
+        "ocr_text": ocr_text,
 
-        "web_context": (
-            web_context
-        ),
-
-        # -------------------------------------------------
-        # OCR
-        # -------------------------------------------------
-
-        "ocr_text": (
-            ocr_text
-        ),
-
-        # -------------------------------------------------
-        # HISTORY
-        # -------------------------------------------------
-
-        "history": (
-            request.history
-        ),
-
-        # -------------------------------------------------
-        # OUTPUT FIELDS
-        # -------------------------------------------------
+        "history": history,
 
         "answer": "",
 
         "sources": [],
 
         "route": "",
-
     }
 
-    # =====================================================
+    # ========================================================
     # RUN AGENT
-    # =====================================================
+    # ========================================================
 
     try:
 
@@ -561,8 +264,20 @@ async def chat(
         )
 
         print(
-            repr(error)
+            "Error type:",
+            type(error).__name__,
         )
+
+        print(
+            "Error:",
+            repr(error),
+        )
+
+        print(
+            "\nFULL TRACEBACK:"
+        )
+
+        traceback.print_exc()
 
         print(
             "========================================\n"
@@ -571,13 +286,14 @@ async def chat(
         raise HTTPException(
             status_code=500,
             detail=(
-                "Agent failed to process the request."
+                "Agent failed to process the request: "
+                f"{type(error).__name__}: {error}"
             ),
         )
 
-    # =====================================================
-    # VALIDATE AGENT RESULT
-    # =====================================================
+    # ========================================================
+    # VALIDATE RESULT
+    # ========================================================
 
     if not isinstance(
         result,
@@ -586,146 +302,149 @@ async def chat(
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Agent returned an invalid response."
-            ),
+            detail="Agent returned an invalid response.",
         )
 
-    # =====================================================
+    # ========================================================
+    # EXTRACT RESULT
+    # ========================================================
+
+    answer = safe_str(
+        result.get(
+            "answer",
+            "",
+        )
+    )
+
+    route = safe_str(
+        result.get(
+            "route",
+            "general",
+        )
+    ).lower()
+
+    result_selected_document = safe_str(
+        result.get(
+            "selected_document",
+            selected_document,
+        )
+    )
+
+    result_web_url = safe_str(
+        result.get(
+            "web_url",
+            web_url,
+        )
+    )
+
+    # --------------------------------------------------------
+    # SOURCES
+    # --------------------------------------------------------
+
+    sources = result.get(
+        "sources",
+        [],
+    )
+
+    if sources is None:
+        sources = []
+
+    if not isinstance(
+        sources,
+        list,
+    ):
+        sources = [sources]
+
+    # --------------------------------------------------------
+    # CONTEXT FLAGS
+    # --------------------------------------------------------
+
+    result_document_context = bool(
+        result.get(
+            "document_context",
+            document_context,
+        )
+    )
+
+    result_web_context = bool(
+        result.get(
+            "web_context",
+            web_context,
+        )
+    )
+
+    # ========================================================
     # DEBUG RESULT
-    # =====================================================
+    # ========================================================
 
     print(
         "\n================ AGENT RESULT ================"
     )
 
     print(
+        "Answer:",
+        answer,
+    )
+
+    print(
+        "Answer type:",
+        type(answer).__name__,
+    )
+
+    print(
         "Route:",
-        result.get(
-            "route",
-            "general",
-        ),
+        route,
+    )
+
+    print(
+        "Route type:",
+        type(route).__name__,
     )
 
     print(
         "Selected document:",
-        result.get(
-            "selected_document",
-            selected_document,
-        ),
+        result_selected_document or "NONE",
     )
 
     print(
         "Web URL:",
-        result.get(
-            "web_url",
-            web_url,
-        ),
+        result_web_url or "NONE",
     )
 
     print(
         "Sources:",
-        len(
-            result.get(
-                "sources",
-                [],
-            ) or []
-        ),
+        len(sources),
     )
 
     print(
         "================================================\n"
     )
 
-    # =====================================================
-    # RESPONSE
-    # =====================================================
+    # ========================================================
+    # FINAL RESPONSE
+    # ========================================================
 
     return {
 
-        # -------------------------------------------------
-        # ANSWER
-        # -------------------------------------------------
+        "answer": answer,
 
-        "answer": (
-            result.get(
-                "answer",
-                "",
-            )
-            or ""
-        ),
+        "route": route,
 
-        # -------------------------------------------------
-        # ROUTE
-        #
-        # rag
-        # web
-        # web_rag
-        # general
-        # greeting
-        # weather
-        # ocr
-        # -------------------------------------------------
-
-        "route": (
-            result.get(
-                "route",
-                "general",
-            )
-            or "general"
-        ),
-
-        # -------------------------------------------------
-        # SOURCES
-        # -------------------------------------------------
-
-        "sources": (
-            result.get(
-                "sources",
-                [],
-            )
-            or []
-        ),
-
-        # -------------------------------------------------
-        # PDF
-        # -------------------------------------------------
+        "sources": sources,
 
         "selected_document": (
-            result.get(
-                "selected_document",
-                selected_document,
-            )
-            or ""
+            result_selected_document
         ),
-
-        # -------------------------------------------------
-        # WEB RAG URL
-        # -------------------------------------------------
 
         "web_url": (
-            result.get(
-                "web_url",
-                web_url,
-            )
-            or ""
+            result_web_url
         ),
 
-        # -------------------------------------------------
-        # CONTEXT FLAGS
-        # -------------------------------------------------
-
         "document_context": (
-            result.get(
-                "document_context",
-                document_context,
-            )
+            result_document_context
         ),
 
         "web_context": (
-            result.get(
-                "web_context",
-                web_context,
-            )
-        )
+            result_web_context
+        ),
     }

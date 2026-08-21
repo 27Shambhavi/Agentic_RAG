@@ -1,16 +1,15 @@
-# Environment
-.env
-.env.*
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-
-# Virtual environment
+# Virtual environments
 venv/
 .venv/
 env/
+
+# Environment variables
+.env
+.env.*
+
+# Python cache
+__pycache__/
+*.py[cod]
 
 # Generated audio
 data/audio/
@@ -37,28 +36,8 @@ data/vectorstore/
 .DS_Store
 Thumbs.db
 
-# Cache
+# Cache / testing
 .cache/
 .pytest_cache/
-# Generated voice/audio files
-data/audio/
-*.wav
-*.mp3
-*.m4a
-*.webm
-*.ogg
-
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Virtual environments
-venv/
-.venv/
-
-# Environment variables
-.env
-.env.*
-
-# Logs
-*.log
+# Uploaded/generated documents
+data/documents/

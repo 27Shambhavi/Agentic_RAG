@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import time
+from urllib.parse import urlparse
 
 from app.rag.chunker import chunk_text
 from app.rag.embeddings import embedding_model
@@ -11,37 +12,32 @@ from app.rag.web_scraper import scrape_url
 from app.llm.gemini import llm
 
 
-# =========================================================
-# CONFIGURATION
-# =========================================================
+# ============================================================
+# CONFIG
+# ============================================================
 
 WEB_CHUNK_SIZE = 800
 WEB_CHUNK_OVERLAP = 100
 
-WEB_TOP_K = 5
+WEB_TOP_K = 6
 
-# For URL-only requests we do not use a semantic
-# relevance threshold.
 WEB_RAG_SCORE_THRESHOLD = 0.20
 
-# Re-fetch webpage after 15 minutes.
 WEB_CACHE_TTL = 900
 
-# Maximum number of chunks used for a URL-only summary.
-# Prevents sending extremely large webpages to the LLM.
 WEB_SUMMARY_MAX_CHUNKS = 12
 
 
-# =========================================================
+# ============================================================
 # PROCESS CACHE
-# =========================================================
+# ============================================================
 
 _WEB_INDEX_CACHE: dict[str, dict] = {}
 
 
-# =========================================================
-# URL VALIDATION
-# =========================================================
+# ============================================================
+# URL HELPERS
+# ============================================================
 
 def validate_url(
     url: str,
@@ -56,9 +52,9 @@ def validate_url(
 
     try:
 
-        from urllib.parse import urlparse
-
-        parsed = urlparse(url)
+        parsed = urlparse(
+            url
+        )
 
     except Exception:
 
@@ -75,10 +71,6 @@ def validate_url(
     )
 
 
-# =========================================================
-# EXTRACT URL
-# =========================================================
-
 def extract_url(
     text: str,
 ) -> str:
@@ -90,12 +82,8 @@ def extract_url(
     if not text:
         return ""
 
-    pattern = (
-        r"https?://[^\s<>\"']+"
-    )
-
     match = re.search(
-        pattern,
+        r"https?://[^\s<>\"']+",
         text,
         flags=re.IGNORECASE,
     )
@@ -111,22 +99,16 @@ def extract_url(
         )
     )
 
-    if validate_url(url):
+    return (
+        normalize_url(url)
+        if validate_url(url)
+        else ""
+    )
 
-        return url
-
-    return ""
-
-
-# =========================================================
-# NORMALIZE URL
-# =========================================================
 
 def normalize_url(
     url: str,
 ) -> str:
-
-    from urllib.parse import urlparse
 
     url = (
         url or ""
@@ -147,7 +129,9 @@ def normalize_url(
             + url
         )
 
-    parsed = urlparse(url)
+    parsed = urlparse(
+        url
+    )
 
     scheme = (
         parsed.scheme.lower()
@@ -161,32 +145,58 @@ def normalize_url(
         parsed.path.rstrip("/")
     )
 
-    query = (
-        parsed.query
-    )
-
-    normalized = (
+    result = (
         f"{scheme}://"
         f"{netloc}"
         f"{path}"
     )
 
-    if query:
+    if parsed.query:
 
-        normalized += (
-            f"?{query}"
+        result += (
+            f"?{parsed.query}"
         )
 
-    return normalized
+    return result
 
 
-# =========================================================
-# SCRAPED PAGE → DICT
-# =========================================================
+# ============================================================
+# DOCUMENT ID
+# ============================================================
+
+def create_web_document_id(
+    url: str,
+) -> str:
+
+    normalized = normalize_url(
+        url
+    )
+
+    digest = hashlib.sha256(
+        normalized.encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+    return (
+        f"web_{digest}"
+    )
+
+
+# ============================================================
+# SCRAPED PAGE
+# ============================================================
 
 def scraped_page_to_dict(
     scraped,
 ) -> dict:
+
+    if isinstance(
+        scraped,
+        dict,
+    ):
+
+        return scraped
 
     if hasattr(
         scraped,
@@ -199,25 +209,21 @@ def scraped_page_to_dict(
                 "url",
                 "",
             ),
-
             "title": getattr(
                 scraped,
                 "title",
                 "",
             ),
-
             "text": getattr(
                 scraped,
                 "text",
                 "",
             ),
-
             "method": getattr(
                 scraped,
                 "method",
                 "",
             ),
-
             "status_code": getattr(
                 scraped,
                 "status_code",
@@ -225,47 +231,16 @@ def scraped_page_to_dict(
             ),
         }
 
-    if isinstance(
-        scraped,
-        dict,
-    ):
-
-        return scraped
-
     raise TypeError(
-        "Unsupported scraped page type: "
-        f"{type(scraped).__name__}"
+        "Unsupported scraper result."
     )
 
 
-# =========================================================
-# WEB DOCUMENT ID
-# =========================================================
+# ============================================================
+# CHUNK
+# ============================================================
 
-def create_web_document_id(
-    url: str,
-) -> str:
-
-    normalized_url = normalize_url(
-        url
-    )
-
-    digest = hashlib.sha256(
-        normalized_url.encode(
-            "utf-8"
-        )
-    ).hexdigest()
-
-    return (
-        f"web_{digest}"
-    )
-
-
-# =========================================================
-# CREATE WEB PAGES
-# =========================================================
-
-def create_web_pages(
+def chunk_web_content(
     scraped: dict,
 ) -> list[dict]:
 
@@ -280,17 +255,14 @@ def create_web_pages(
     if not text:
         return []
 
-    return [
+    pages = [
         {
             "text": text,
-
             "page": 1,
-
             "source": scraped.get(
                 "url",
                 "",
             ),
-
             "title": scraped.get(
                 "title",
                 "",
@@ -298,70 +270,49 @@ def create_web_pages(
         }
     ]
 
-
-# =========================================================
-# CHUNK WEB CONTENT
-# =========================================================
-
-def chunk_web_content(
-    scraped: dict,
-) -> list[dict]:
-
-    pages = create_web_pages(
-        scraped
+    return (
+        chunk_text(
+            pages,
+            chunk_size=WEB_CHUNK_SIZE,
+            chunk_overlap=WEB_CHUNK_OVERLAP,
+        )
+        or []
     )
 
-    if not pages:
-        return []
 
-    chunks = chunk_text(
-        pages,
-        chunk_size=WEB_CHUNK_SIZE,
-        chunk_overlap=WEB_CHUNK_OVERLAP,
-    )
-
-    return chunks or []
-
-
-# =========================================================
+# ============================================================
 # INDEX WEB PAGE
-# =========================================================
+# ============================================================
 
 def index_web_page(
     url: str,
 ) -> dict:
 
-    normalized_url = normalize_url(
+    url = normalize_url(
         url
     )
 
-    if not validate_url(
-        normalized_url
-    ):
+    if not validate_url(url):
 
         raise ValueError(
             f"Invalid URL: {url}"
         )
 
     print(
-        "\n================================================="
-    )
-
-    print(
-        "WEB RAG INDEXING"
+        "\n================ WEB INDEX ================"
     )
 
     print(
         "URL:",
-        normalized_url,
+        url,
     )
 
-    # =====================================================
+    # ========================================================
     # SCRAPE
-    # =====================================================
+    # ========================================================
 
     scraped = scrape_url(
-        normalized_url
+        url
     )
 
     scraped = scraped_page_to_dict(
@@ -379,8 +330,7 @@ def index_web_page(
     if not text:
 
         raise ValueError(
-            "No meaningful content was extracted "
-            "from the webpage."
+            "No meaningful webpage content was extracted."
         )
 
     title = (
@@ -399,9 +349,9 @@ def index_web_page(
         or "unknown"
     )
 
-    # =====================================================
+    # ========================================================
     # CHUNK
-    # =====================================================
+    # ========================================================
 
     chunks = chunk_web_content(
         scraped
@@ -410,35 +360,14 @@ def index_web_page(
     if not chunks:
 
         raise ValueError(
-            "No chunks were generated from "
-            "the webpage."
+            "No webpage chunks were generated."
         )
 
-    print(
-        "Title:",
-        title,
-    )
-
-    print(
-        "Scraping method:",
-        method,
-    )
-
-    print(
-        "Extracted characters:",
-        len(text),
-    )
-
-    print(
-        "Chunks:",
-        len(chunks),
-    )
-
-    # =====================================================
+    # ========================================================
     # EMBEDDINGS
-    # =====================================================
+    # ========================================================
 
-    texts = []
+    usable_chunks = []
 
     for chunk in chunks:
 
@@ -452,15 +381,14 @@ def index_web_page(
 
         if content:
 
-            texts.append(
-                content
+            usable_chunks.append(
+                chunk
             )
 
-    if not texts:
-
-        raise ValueError(
-            "Chunks contain no usable text."
-        )
+    texts = [
+        chunk["text"]
+        for chunk in usable_chunks
+    ]
 
     embeddings = (
         embedding_model.embed_documents(
@@ -468,58 +396,48 @@ def index_web_page(
         )
     )
 
-    if len(embeddings) != len(
-        texts
-    ):
+    if len(embeddings) != len(texts):
 
         raise ValueError(
-            "Embedding count does not match "
-            "chunk count."
+            "Embedding count does not match chunk count."
         )
 
-    # =====================================================
+    # ========================================================
     # DOCUMENT ID
-    # =====================================================
+    # ========================================================
 
-    web_document_id = (
+    document_id = (
         create_web_document_id(
-            normalized_url
+            url
         )
     )
 
-    # =====================================================
-    # BUILD VECTORS
-    # =====================================================
+    # ========================================================
+    # VECTORS
+    # ========================================================
 
     vectors = []
 
-    valid_chunk_index = 0
-
-    for chunk in chunks:
+    for index, (
+        chunk,
+        embedding,
+    ) in enumerate(
+        zip(
+            usable_chunks,
+            embeddings,
+        )
+    ):
 
         content = (
-            chunk.get(
-                "text",
-                "",
-            )
-            or ""
-        ).strip()
-
-        if not content:
-            continue
-
-        embedding = embeddings[
-            valid_chunk_index
-        ]
-
-        vector_id = (
-            f"{web_document_id}_"
-            f"{valid_chunk_index}"
+            chunk["text"]
+            .strip()
         )
 
         vectors.append(
             {
-                "id": vector_id,
+                "id": (
+                    f"{document_id}_{index}"
+                ),
 
                 "values": embedding,
 
@@ -527,15 +445,13 @@ def index_web_page(
 
                     "type": "web",
 
-                    "source": normalized_url,
+                    "source": url,
 
-                    "url": normalized_url,
+                    "url": url,
 
                     "title": title,
 
-                    "document_id": (
-                        web_document_id
-                    ),
+                    "document_id": document_id,
 
                     "method": method,
 
@@ -544,153 +460,78 @@ def index_web_page(
                         1,
                     ),
 
-                    "chunk_index": (
-                        valid_chunk_index
-                    ),
+                    "chunk_index": index,
 
                     "text": content,
                 },
             }
         )
 
-        valid_chunk_index += 1
-
-    if not vectors:
-
-        raise ValueError(
-            "No vectors were generated."
-        )
-
-    # =====================================================
-    # PINECONE UPSERT
-    # =====================================================
+    # ========================================================
+    # PERSIST
+    # ========================================================
 
     pinecone_client.upsert(
         vectors
     )
 
-    # =====================================================
-    # IMPORTANT
-    #
-    # Keep chunks internally.
-    #
-    # This allows URL-only requests to summarize
-    # the freshly scraped webpage directly instead
-    # of depending on semantic retrieval.
-    # =====================================================
+    print(
+        "Persisted web vectors:",
+        len(vectors),
+    )
 
-    result = {
+    # ========================================================
+    # RETURN
+    # ========================================================
 
-        "url": normalized_url,
+    return {
+
+        "url": url,
 
         "title": title,
 
         "method": method,
 
-        "chunks": len(chunks),
+        "chunks": len(usable_chunks),
 
         "vectors": len(vectors),
 
-        "document_id": (
-            web_document_id
-        ),
+        "document_id": document_id,
 
         "status": "indexed",
 
         "_chunks": [
             {
-                "text": (
-                    chunk.get(
-                        "text",
-                        "",
-                    )
-                    or ""
-                ).strip(),
-
+                "text": chunk["text"],
                 "page": chunk.get(
                     "page",
                     1,
                 ),
-
-                "source": normalized_url,
-
+                "source": url,
                 "title": title,
             }
-
-            for chunk in chunks
-
-            if (
-                chunk.get(
-                    "text",
-                    "",
-                )
-                or ""
-            ).strip()
+            for chunk in usable_chunks
         ],
     }
 
-    print(
-        "\n================ WEB INDEX ================"
-    )
 
-    print(
-        "URL:",
-        normalized_url,
-    )
-
-    print(
-        "Document ID:",
-        web_document_id,
-    )
-
-    print(
-        "Title:",
-        title,
-    )
-
-    print(
-        "Scraping method:",
-        method,
-    )
-
-    print(
-        "Chunks:",
-        len(chunks),
-    )
-
-    print(
-        "Vectors indexed:",
-        len(vectors),
-    )
-
-    print(
-        "============================================\n"
-    )
-
-    return result
-
-
-# =========================================================
-# INDEX WITH CACHE
-# =========================================================
+# ============================================================
+# CACHE + INDEX
+# ============================================================
 
 def get_or_index_web_page(
     url: str,
 ) -> dict:
 
-    normalized_url = normalize_url(
+    url = normalize_url(
         url
     )
 
     now = time.time()
 
     cached = _WEB_INDEX_CACHE.get(
-        normalized_url
+        url
     )
-
-    # =====================================================
-    # CACHE HIT
-    # =====================================================
 
     if cached:
 
@@ -704,92 +545,184 @@ def get_or_index_web_page(
 
         if age < WEB_CACHE_TTL:
 
-            print(
-                "[WEB RAG] Using cached index."
-            )
-
-            return cached[
-                "result"
-            ]
-
-    # =====================================================
-    # CACHE MISS
-    # =====================================================
-
-    print(
-        "[WEB RAG] Scraping/indexing webpage..."
-    )
+            return cached["result"]
 
     result = index_web_page(
-        normalized_url
+        url
     )
 
-    _WEB_INDEX_CACHE[
-        normalized_url
-    ] = {
-
+    _WEB_INDEX_CACHE[url] = {
         "timestamp": time.time(),
-
         "result": result,
     }
 
     return result
 
 
-# =========================================================
-# BUILD SEMANTIC QUERY
-# =========================================================
+# ============================================================
+# PINECONE RESULT NORMALIZER
+# ============================================================
 
-def build_web_semantic_query(
-    query: str,
-    url: str,
-) -> tuple[str, bool]:
+def _extract_matches(
+    result,
+) -> list:
 
-    query = (
-        query or ""
-    ).strip()
-
-    clean_query = re.sub(
-        r"https?://[^\s<>\"']+",
-        "",
-        query,
-        flags=re.IGNORECASE,
-    ).strip()
-
-    # =====================================================
-    # URL ONLY
-    # =====================================================
-
-    if not clean_query:
-
-        semantic_query = (
-            "main content purpose services "
-            "products topics important information "
-            "about this webpage"
-        )
+    if isinstance(
+        result,
+        dict,
+    ):
 
         return (
-            semantic_query,
-            True,
+            result.get(
+                "matches",
+                [],
+            )
+            or []
         )
 
-    # =====================================================
-    # SPECIFIC QUESTION
-    # =====================================================
-
     return (
-        clean_query,
-        False,
+        getattr(
+            result,
+            "matches",
+            [],
+        )
+        or []
     )
 
 
-# =========================================================
-# RETRIEVE WEB PAGE
-# =========================================================
+def _match_to_document(
+    match,
+) -> dict | None:
+
+    if isinstance(
+        match,
+        dict,
+    ):
+
+        metadata = (
+            match.get(
+                "metadata",
+                {},
+            )
+            or {}
+        )
+
+        match_id = (
+            match.get(
+                "id",
+                "",
+            )
+            or ""
+        )
+
+        raw_score = (
+            match.get(
+                "score",
+                0.0,
+            )
+        )
+
+    else:
+
+        metadata = (
+            getattr(
+                match,
+                "metadata",
+                {},
+            )
+            or {}
+        )
+
+        match_id = (
+            getattr(
+                match,
+                "id",
+                "",
+            )
+            or ""
+        )
+
+        raw_score = (
+            getattr(
+                match,
+                "score",
+                0.0,
+            )
+        )
+
+    try:
+
+        score = float(
+            raw_score
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        score = 0.0
+
+    text = str(
+        metadata.get(
+            "text",
+            "",
+        )
+        or ""
+    ).strip()
+
+    if not text:
+
+        return None
+
+    return {
+
+        "text": text,
+
+        "source": (
+            metadata.get(
+                "source",
+                "",
+            )
+            or ""
+        ),
+
+        "url": (
+            metadata.get(
+                "url",
+                "",
+            )
+            or ""
+        ),
+
+        "title": (
+            metadata.get(
+                "title",
+                "",
+            )
+            or ""
+        ),
+
+        "page": metadata.get(
+            "page",
+            1,
+        ),
+
+        "score": score,
+
+        "id": match_id,
+
+        "type": "web",
+    }
+
+
+# ============================================================
+# RETRIEVE WEB CHUNKS
+# ============================================================
 
 def retrieve_web_page(
     query: str,
-    url: str,
+    url: str = "",
     top_k: int = WEB_TOP_K,
 ) -> list[dict]:
 
@@ -799,17 +732,10 @@ def retrieve_web_page(
 
     url = normalize_url(
         url
-    )
+    ) if url else ""
 
-    if not query or not url:
+    if not query:
         return []
-
-    if not validate_url(url):
-        return []
-
-    # =====================================================
-    # QUERY EMBEDDING
-    # =====================================================
 
     query_vector = (
         embedding_model.embed_text(
@@ -817,245 +743,113 @@ def retrieve_web_page(
         )
     )
 
-    # =====================================================
-    # FIRST TRY:
-    # EXACT URL FILTER
-    # =====================================================
+    # ========================================================
+    # FIRST:
+    # SPECIFIC URL
+    # ========================================================
 
-    result = pinecone_client.query(
-
-        vector=query_vector,
-
-        top_k=top_k,
-
-        filter={
-            "source": {
-                "$eq": url
-            }
-        },
-    )
-
-    # =====================================================
-    # EXTRACT MATCHES
-    # =====================================================
-
-    if isinstance(
-        result,
-        dict,
-    ):
-
-        matches = (
-            result.get(
-                "matches",
-                [],
-            )
-            or []
-        )
-
-    else:
-
-        matches = (
-            getattr(
-                result,
-                "matches",
-                [],
-            )
-            or []
-        )
-
-    print(
-        "\n================ WEB RETRIEVER ================"
-    )
-
-    print(
-        "Query:",
-        query,
-    )
-
-    print(
-        "URL:",
-        url,
-    )
-
-    print(
-        "Filtered matches:",
-        len(matches),
-    )
-
-    documents = []
-
-    # =====================================================
-    # PROCESS MATCHES
-    # =====================================================
-
-    for index, match in enumerate(
-        matches,
-        start=1,
-    ):
-
-        if isinstance(
-            match,
-            dict,
-        ):
-
-            metadata = (
-                match.get(
-                    "metadata",
-                    {},
-                )
-                or {}
-            )
-
-            match_id = (
-                match.get(
-                    "id",
-                    "",
-                )
-                or ""
-            )
-
-            raw_score = (
-                match.get(
-                    "score",
-                    0.0,
-                )
-            )
-
-        else:
-
-            metadata = (
-                getattr(
-                    match,
-                    "metadata",
-                    {},
-                )
-                or {}
-            )
-
-            match_id = (
-                getattr(
-                    match,
-                    "id",
-                    "",
-                )
-                or ""
-            )
-
-            raw_score = (
-                getattr(
-                    match,
-                    "score",
-                    0.0,
-                )
-            )
-
-        if not isinstance(
-            metadata,
-            dict,
-        ):
-
-            try:
-                metadata = dict(
-                    metadata
-                )
-
-            except Exception:
-                metadata = {}
+    if url:
 
         try:
 
-            score = float(
-                raw_score
+            result = pinecone_client.query(
+                vector=query_vector,
+                top_k=top_k,
+                filter={
+                    "type": {
+                        "$eq": "web"
+                    },
+                    "source": {
+                        "$eq": url
+                    },
+                },
             )
 
-        except (
-            TypeError,
-            ValueError,
-        ):
+            documents = []
 
-            score = 0.0
+            for match in _extract_matches(
+                result
+            ):
 
-        text = str(
-            metadata.get(
-                "text",
-                "",
+                document = (
+                    _match_to_document(
+                        match
+                    )
+                )
+
+                if document:
+
+                    documents.append(
+                        document
+                    )
+
+            if documents:
+
+                return documents
+
+        except Exception as error:
+
+            print(
+                "[WEB URL RETRIEVAL ERROR]",
+                repr(error),
             )
-            or ""
-        ).strip()
+
+    # ========================================================
+    # SECOND:
+    # ALL STORED WEB PAGES
+    # ========================================================
+
+    try:
+
+        result = pinecone_client.query(
+            vector=query_vector,
+            top_k=top_k,
+            filter={
+                "type": {
+                    "$eq": "web"
+                }
+            },
+        )
+
+    except Exception as error:
 
         print(
-            f"[{index}] "
-            f"score={score:.4f} "
-            f"text_length={len(text)} "
-            f"id={match_id}"
+            "[GLOBAL WEB RETRIEVAL ERROR]",
+            repr(error),
         )
 
-        if not text:
-            continue
+        return []
 
-        documents.append(
-            {
-                "text": text,
+    documents = []
 
-                "source": (
-                    metadata.get(
-                        "source",
-                        url,
-                    )
-                    or url
-                ),
+    for match in _extract_matches(
+        result
+    ):
 
-                "url": (
-                    metadata.get(
-                        "url",
-                        url,
-                    )
-                    or url
-                ),
-
-                "page": metadata.get(
-                    "page",
-                    1,
-                ),
-
-                "title": (
-                    metadata.get(
-                        "title",
-                        "",
-                    )
-                    or ""
-                ),
-
-                "score": score,
-
-                "id": match_id,
-            }
+        document = (
+            _match_to_document(
+                match
+            )
         )
 
-    print(
-        "Usable retrieved chunks:",
-        len(documents),
-    )
+        if document:
 
-    print(
-        "================================================\n"
-    )
+            documents.append(
+                document
+            )
 
     return documents
 
 
-# =========================================================
-# BUILD DIRECT WEB DOCUMENTS
-# =========================================================
-#
-# Used for URL-only requests.
-#
-# This is the important fix.
-# =========================================================
+# ============================================================
+# DIRECT WEB DOCUMENTS
+# ============================================================
 
 def build_direct_web_documents(
     index_result: dict,
 ) -> list[dict]:
+
+    documents = []
 
     raw_chunks = (
         index_result.get(
@@ -1065,10 +859,10 @@ def build_direct_web_documents(
         or []
     )
 
-    documents = []
-
     for index, chunk in enumerate(
-        raw_chunks[:WEB_SUMMARY_MAX_CHUNKS],
+        raw_chunks[
+            :WEB_SUMMARY_MAX_CHUNKS
+        ],
         start=1,
     ):
 
@@ -1092,7 +886,6 @@ def build_direct_web_documents(
         documents.append(
             {
                 "text": text,
-
                 "source": (
                     chunk.get(
                         "source",
@@ -1101,24 +894,12 @@ def build_direct_web_documents(
                             "",
                         ),
                     )
-                    or index_result.get(
-                        "url",
-                        "",
-                    )
+                    or ""
                 ),
-
-                "url": (
-                    index_result.get(
-                        "url",
-                        "",
-                    )
+                "url": index_result.get(
+                    "url",
+                    "",
                 ),
-
-                "page": chunk.get(
-                    "page",
-                    1,
-                ),
-
                 "title": (
                     chunk.get(
                         "title",
@@ -1129,41 +910,37 @@ def build_direct_web_documents(
                     )
                     or ""
                 ),
-
-                # Directly scraped content does not
-                # have a semantic relevance score.
+                "page": chunk.get(
+                    "page",
+                    1,
+                ),
                 "score": 1.0,
-
                 "id": (
                     f"direct_web_{index}"
                 ),
+                "type": "web",
             }
         )
-
-    print(
-        "[WEB RAG] Direct webpage chunks:",
-        len(documents),
-    )
 
     return documents
 
 
-# =========================================================
-# BUILD WEB CONTEXT
-# =========================================================
+# ============================================================
+# CONTEXT
+# ============================================================
 
 def build_web_context(
     documents: list[dict],
 ) -> str:
 
-    context_parts = []
+    parts = []
 
     for index, document in enumerate(
         documents,
         start=1,
     ):
 
-        context_parts.append(
+        parts.append(
             f"""
 SOURCE {index}
 
@@ -1171,7 +948,7 @@ TITLE:
 {document.get("title", "")}
 
 URL:
-{document.get("source", "")}
+{document.get("url", document.get("source", ""))}
 
 PAGE:
 {document.get("page", 1)}
@@ -1181,22 +958,20 @@ CONTENT:
 """
         )
 
-    return "\n\n".join(
-        context_parts
-    )
+    return "\n\n".join(parts)
 
 
-# =========================================================
-# BUILD HISTORY
-# =========================================================
+# ============================================================
+# HISTORY
+# ============================================================
 
 def build_history(
     history: list[dict],
 ) -> str:
 
-    history_parts = []
+    parts = []
 
-    for message in history[-6:]:
+    for message in history[-8:]:
 
         if not isinstance(
             message,
@@ -1209,37 +984,36 @@ def build_history(
                 "role",
                 "user",
             )
-        ).strip()
+        ).upper()
 
         content = str(
             message.get(
                 "content",
                 "",
             )
+            or "",
         ).strip()
 
         if content:
 
-            history_parts.append(
-                f"{role.upper()}: {content}"
+            parts.append(
+                f"{role}: {content}"
             )
 
-    if not history_parts:
-
-        return "No previous conversation."
-
-    return "\n".join(
-        history_parts
+    return (
+        "\n".join(parts)
+        if parts
+        else "No previous conversation."
     )
 
 
-# =========================================================
+# ============================================================
 # WEB RAG
-# =========================================================
+# ============================================================
 
 def web_rag(
     query: str,
-    url: str,
+    url: str = "",
     history: list[dict] | None = None,
 ) -> dict:
 
@@ -1247,17 +1021,20 @@ def web_rag(
         query or ""
     ).strip()
 
-    url = normalize_url(
-        url
-    )
-
     history = (
-        history or []
+        history
+        if isinstance(
+            history,
+            list,
+        )
+        else []
     )
 
-    # =====================================================
-    # VALIDATION
-    # =====================================================
+    url = (
+        normalize_url(url)
+        if url
+        else ""
+    )
 
     if not query:
 
@@ -1266,214 +1043,126 @@ def web_rag(
             "answer": "",
             "sources": [],
             "documents": [],
-            "url": url,
         }
 
-    if not validate_url(url):
+    # ========================================================
+    # URL IN CURRENT QUERY
+    # ========================================================
 
-        return {
-            "relevant": False,
-            "answer": "",
-            "sources": [],
-            "documents": [],
-            "url": url,
-            "error": "Invalid URL.",
-        }
-
-    # =====================================================
-    # SEMANTIC QUERY
-    # =====================================================
-
-    semantic_query, url_only = (
-        build_web_semantic_query(
-            query=query,
-            url=url,
-        )
+    current_query_url = extract_url(
+        query
     )
 
-    print(
-        "\n===================================================="
-    )
+    if current_query_url:
 
-    print(
-        "WEB RAG"
-    )
+        url = current_query_url
 
-    print(
-        "Original query:",
-        query,
-    )
+    # ========================================================
+    # IF URL IS PROVIDED, INDEX IT
+    # ========================================================
 
-    print(
-        "URL:",
-        url,
-    )
+    index_result = {}
 
-    print(
-        "URL-only:",
-        url_only,
-    )
-
-    # =====================================================
-    # SCRAPE + INDEX
-    # =====================================================
-
-    try:
-
-        index_result = (
-            get_or_index_web_page(
-                url
-            )
-        )
-
-    except Exception as error:
-
-        print(
-            "\n[WEB RAG INDEX ERROR]"
-        )
-
-        print(
-            repr(error)
-        )
-
-        return {
-
-            "relevant": False,
-
-            "answer": (
-                "I couldn't access and process "
-                "the provided webpage. It may be "
-                "blocking automated access or "
-                "requiring interaction/login."
-            ),
-
-            "sources": [],
-
-            "documents": [],
-
-            "url": url,
-
-            "error": str(error),
-        }
-
-    # =====================================================
-    # URL-ONLY REQUEST
-    # =====================================================
-    #
-    # IMPORTANT:
-    #
-    # Do NOT ask Pinecone to find the webpage's own
-    # content using a generic embedding query.
-    #
-    # We already scraped the content.
-    #
-    # Use the freshly indexed chunks directly.
-    #
-    # =====================================================
-
-    if url_only:
-
-        documents = (
-            build_direct_web_documents(
-                index_result
-            )
-        )
-
-        if not documents:
-
-            return {
-
-                "relevant": False,
-
-                "answer": (
-                    "The webpage was accessed, "
-                    "but no usable content was extracted."
-                ),
-
-                "sources": [],
-
-                "documents": [],
-
-                "url": url,
-
-                "index": index_result,
-            }
-
-        best_score = 1.0
-
-    # =====================================================
-    # SPECIFIC QUESTION
-    # =====================================================
-
-    else:
+    if url:
 
         try:
 
-            documents = retrieve_web_page(
-
-                query=semantic_query,
-
-                url=url,
-
-                top_k=WEB_TOP_K,
+            index_result = (
+                get_or_index_web_page(
+                    url
+                )
             )
 
         except Exception as error:
 
             print(
-                "\n[WEB RAG RETRIEVAL ERROR]"
+                "[WEB INDEX ERROR]",
+                repr(error),
             )
 
-            print(
-                repr(error)
+            # We do not immediately fail.
+            # Persisted vectors may already exist.
+
+    # ========================================================
+    # REMOVE URL FROM QUESTION
+    # ========================================================
+
+    semantic_query = re.sub(
+        r"https?://[^\s<>\"']+",
+        "",
+        query,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    # ========================================================
+    # URL ONLY
+    # ========================================================
+
+    if not semantic_query:
+
+        if index_result:
+
+            documents = (
+                build_direct_web_documents(
+                    index_result
+                )
             )
 
-            return {
+        else:
 
-                "relevant": False,
-
-                "answer": (
-                    "The webpage was accessed, "
-                    "but I couldn't search its content."
+            documents = retrieve_web_page(
+                query=(
+                    "main purpose "
+                    "important information "
+                    "services products topics"
                 ),
-
-                "sources": [],
-
-                "documents": [],
-
-                "url": url,
-
-                "error": str(error),
-            }
-
-        # =================================================
-        # NO MATCHES
-        # =================================================
+                url=url,
+            )
 
         if not documents:
 
             return {
-
                 "relevant": False,
-
-                "answer": (
-                    "The webpage was accessed, "
-                    "but no usable matching information "
-                    "was retrieved."
-                ),
-
+                "answer": "",
                 "sources": [],
-
                 "documents": [],
-
                 "url": url,
-
-                "index": index_result,
             }
 
-        # =================================================
-        # BEST SCORE
-        # =================================================
+        best_score = 1.0
+
+        instruction = """
+The user supplied a webpage URL without a specific question.
+
+Give a useful overview of the webpage.
+
+Explain the main purpose, important topics, services,
+products, sections, and facts that are actually present.
+
+Use only the webpage content.
+"""
+
+    # ========================================================
+    # SPECIFIC QUESTION
+    # ========================================================
+
+    else:
+
+        documents = retrieve_web_page(
+            query=semantic_query,
+            url=url,
+            top_k=WEB_TOP_K,
+        )
+
+        if not documents:
+
+            return {
+                "relevant": False,
+                "answer": "",
+                "sources": [],
+                "documents": [],
+                "url": url,
+            }
 
         best_score = max(
             float(
@@ -1485,132 +1174,64 @@ def web_rag(
             for document in documents
         )
 
-        # =================================================
-        # RELEVANCE GATE
-        # =================================================
-
         if best_score < WEB_RAG_SCORE_THRESHOLD:
 
             return {
-
                 "relevant": False,
-
-                "answer": (
-                    "I couldn't find enough relevant "
-                    "information on the provided webpage "
-                    "to answer this question."
-                ),
-
-                "sources": [],
-
+                "answer": "",
+                "sources": documents,
                 "documents": documents,
-
                 "best_score": best_score,
-
                 "url": url,
-
-                "index": index_result,
             }
 
-    # =====================================================
-    # CONTEXT
-    # =====================================================
+        instruction = f"""
+Answer this question:
+
+{semantic_query}
+
+Use only the retrieved webpage content.
+
+If the answer is not present in the retrieved content,
+say that it was not found on the webpage.
+"""
+
+    # ========================================================
+    # GENERATION
+    # ========================================================
 
     context = build_web_context(
         documents
     )
 
-    # =====================================================
-    # HISTORY
-    # =====================================================
-
-    history_text = build_history(
-        history
-    )
-
-    # =====================================================
-    # INSTRUCTION
-    # =====================================================
-
-    if url_only:
-
-        user_instruction = """
-The user provided a webpage URL without
-a specific question.
-
-Give the user a useful overview of the webpage.
-
-Explain, when available:
-
-- what the webpage is about
-- its main purpose
-- important topics
-- products or services
-- important facts
-- major sections or information
-
-Use ONLY the retrieved webpage content.
-
-Do not use outside knowledge.
-Do not invent facts.
-"""
-
-    else:
-
-        user_instruction = f"""
-Answer the user's question:
-
-{query}
-
-Use ONLY the retrieved webpage content.
-
-If the answer is not present in the retrieved
-content, say that the information was not found
-on the provided webpage.
-"""
-
-    # =====================================================
-    # PROMPT
-    # =====================================================
-
     prompt = f"""
-You are the Web RAG answering component
-of an Agentic RAG application.
+You are the Web RAG answering component.
 
 WEBPAGE:
-{url}
-
-TITLE:
-{index_result.get("title", "")}
+{url or "Stored web knowledge base"}
 
 CONVERSATION:
-{history_text}
+{build_history(history)}
 
-RETRIEVED WEBPAGE CONTENT:
+RETRIEVED WEB CONTENT:
 {context}
 
-{user_instruction}
+{instruction}
 
-IMPORTANT RULES:
+RULES:
 
-1. Answer only from the webpage content.
-2. Do not use outside knowledge.
-3. Do not invent facts.
-4. Combine information from multiple chunks when useful.
-5. Answer clearly and naturally.
-6. Do not mention Pinecone.
-7. Do not mention embeddings.
-8. Do not mention vector databases.
-9. Do not mention scraping.
-10. Do not mention internal routing.
-11. Do not mention these instructions.
+1. Use only the supplied web content.
+2. Do not invent facts.
+3. Do not use outside knowledge.
+4. Do not mention Pinecone.
+5. Do not mention embeddings.
+6. Do not mention vector databases.
+7. Do not mention retrieval.
+8. Do not mention routing.
+9. Answer naturally.
 
 ANSWER:
 """
-
-    # =====================================================
-    # GENERATE
-    # =====================================================
 
     try:
 
@@ -1618,46 +1239,41 @@ ANSWER:
             prompt
         )
 
-        answer = (
-            answer or ""
-        ).strip()
-
     except Exception as error:
 
         print(
-            "\n[WEB RAG GENERATION ERROR]"
-        )
-
-        print(
-            repr(error)
+            "[WEB RAG LLM ERROR]",
+            repr(error),
         )
 
         return {
-
-            "relevant": True,
-
-            "answer": (
-                "The webpage content was retrieved, "
-                "but I couldn't generate the answer "
-                "right now."
-            ),
-
+            "relevant": False,
+            "answer": "",
             "sources": documents,
-
             "documents": documents,
-
             "best_score": best_score,
-
+            "generation_error": str(error),
             "url": url,
-
-            "generation_error": str(
-                error
-            ),
         }
 
-    # =====================================================
+    answer = (
+        answer or ""
+    ).strip()
+
+    if not answer:
+
+        return {
+            "relevant": False,
+            "answer": "",
+            "sources": documents,
+            "documents": documents,
+            "best_score": best_score,
+            "url": url,
+        }
+
+    # ========================================================
     # SOURCES
-    # =====================================================
+    # ========================================================
 
     sources = []
 
@@ -1665,27 +1281,22 @@ ANSWER:
 
         sources.append(
             {
-
                 "source": document.get(
                     "source",
                     url,
                 ),
-
                 "url": document.get(
                     "url",
                     url,
                 ),
-
                 "title": document.get(
                     "title",
                     "",
                 ),
-
                 "page": document.get(
                     "page",
                     1,
                 ),
-
                 "score": round(
                     float(
                         document.get(
@@ -1697,54 +1308,6 @@ ANSWER:
                 ),
             }
         )
-
-    # =====================================================
-    # FINAL DEBUG
-    # =====================================================
-
-    print(
-        "\n================ WEB RAG COMPLETE ================"
-    )
-
-    print(
-        "URL:",
-        url,
-    )
-
-    print(
-        "Title:",
-        index_result.get(
-            "title",
-            "",
-        ),
-    )
-
-    print(
-        "Scraping method:",
-        index_result.get(
-            "method",
-            "",
-        ),
-    )
-
-    print(
-        "URL-only:",
-        url_only,
-    )
-
-    print(
-        "Retrieved/direct chunks:",
-        len(documents),
-    )
-
-    print(
-        "Best score:",
-        best_score,
-    )
-
-    print(
-        "====================================================\n"
-    )
 
     return {
 
@@ -1762,7 +1325,12 @@ ANSWER:
 
         "title": index_result.get(
             "title",
-            "",
+            documents[0].get(
+                "title",
+                "",
+            )
+            if documents
+            else "",
         ),
 
         "scraping_method": index_result.get(

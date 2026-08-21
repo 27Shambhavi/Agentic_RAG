@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import re
+from typing import Any
+
 from app.agents.state import AgentState
 
 from app.rag.document_rag import document_rag
@@ -11,9 +14,46 @@ from app.llm.gemini import llm
 RAG_RELEVANCE_THRESHOLD = 0.15
 
 
-# =========================================================
-# HELPERS
-# =========================================================
+# ============================================================
+# SAFE VALUE HELPERS
+# ============================================================
+
+def safe_text(
+    value: Any,
+) -> str:
+    """
+    Safely convert a value to a stripped string.
+
+    Prevents errors such as:
+
+        AttributeError:
+        'tuple' object has no attribute 'strip'
+    """
+
+    if value is None:
+        return ""
+
+    if isinstance(
+        value,
+        tuple,
+    ):
+
+        if len(value) == 1:
+            value = value[0]
+
+        else:
+            value = " ".join(
+                str(item)
+                for item in value
+                if item is not None
+            )
+
+    return str(value).strip()
+
+
+# ============================================================
+# HISTORY
+# ============================================================
 
 def safe_history(
     state: AgentState,
@@ -24,23 +64,22 @@ def safe_history(
         [],
     )
 
-    return (
-        history
-        if isinstance(
-            history,
-            list,
-        )
-        else []
-    )
+    if not isinstance(
+        history,
+        list,
+    ):
+        return []
+
+    return history
 
 
 def build_history_text(
     history: list[dict],
 ) -> str:
 
-    parts = []
+    parts: list[str] = []
 
-    for message in history[-6:]:
+    for message in history[-8:]:
 
         if not isinstance(
             message,
@@ -48,20 +87,19 @@ def build_history_text(
         ):
             continue
 
-        role = str(
+        role = safe_text(
             message.get(
                 "role",
                 "user",
             )
         ).upper()
 
-        content = str(
+        content = safe_text(
             message.get(
                 "content",
                 "",
             )
-            or ""
-        ).strip()
+        )
 
         if content:
 
@@ -69,16 +107,187 @@ def build_history_text(
                 f"{role}: {content}"
             )
 
+    if parts:
+        return "\n".join(parts)
+
+    return "No previous conversation."
+
+
+# ============================================================
+# URL HELPERS
+# ============================================================
+
+def extract_url(
+    text: Any,
+) -> str:
+
+    text = safe_text(
+        text
+    )
+
+    if not text:
+        return ""
+
+    match = re.search(
+        r"https?://[^\s<>\"']+",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    if not match:
+        return ""
+
     return (
-        "\n".join(parts)
-        if parts
-        else "No previous conversation."
+        match.group(0)
+        .strip()
+        .rstrip(
+            ".,!?;:)]}"
+        )
     )
 
 
-# =========================================================
-# RAG RETRIEVAL
-# =========================================================
+def resolve_active_web_url(
+    state: AgentState,
+) -> str:
+
+    # ========================================================
+    # 1. CURRENT STATE
+    # ========================================================
+
+    for key in (
+        "active_web_url",
+        "web_url",
+    ):
+
+        value = safe_text(
+            state.get(
+                key,
+                "",
+            )
+        )
+
+        if value:
+            return value
+
+    # ========================================================
+    # 2. STORED URL LIST
+    # ========================================================
+
+    urls = state.get(
+        "web_urls",
+        [],
+    )
+
+    if isinstance(
+        urls,
+        list,
+    ):
+
+        for url in reversed(
+            urls
+        ):
+
+            value = safe_text(
+                url
+            )
+
+            if value:
+                return value
+
+    # ========================================================
+    # 3. CONVERSATION HISTORY
+    # ========================================================
+
+    history = safe_history(
+        state
+    )
+
+    for message in reversed(
+        history
+    ):
+
+        if not isinstance(
+            message,
+            dict,
+        ):
+            continue
+
+        content = safe_text(
+            message.get(
+                "content",
+                "",
+            )
+        )
+
+        url = extract_url(
+            content
+        )
+
+        if url:
+            return url
+
+    return ""
+
+
+def update_web_url_state(
+    state: AgentState,
+) -> AgentState:
+
+    query = safe_text(
+        state.get(
+            "query",
+            "",
+        )
+    )
+
+    current_url = extract_url(
+        query
+    )
+
+    active_url = (
+        current_url
+        or resolve_active_web_url(
+            state
+        )
+    )
+
+    urls = state.get(
+        "web_urls",
+        [],
+    )
+
+    if not isinstance(
+        urls,
+        list,
+    ):
+        urls = []
+
+    urls = list(
+        urls
+    )
+
+    if current_url:
+
+        if current_url not in urls:
+
+            urls.append(
+                current_url
+            )
+
+    return {
+        **state,
+
+        "active_web_url": active_url,
+
+        "web_url": active_url,
+
+        "web_urls": urls,
+    }
+
+
+# ============================================================
+# DOCUMENT RETRIEVAL
+# ============================================================
 
 def get_document_matches(
     query: str,
@@ -86,10 +295,18 @@ def get_document_matches(
 
     try:
 
-        return retrieve(
+        result = retrieve(
             query=query,
             top_k=8,
         )
+
+        if not isinstance(
+            result,
+            list,
+        ):
+            return []
+
+        return result
 
     except Exception as error:
 
@@ -105,57 +322,67 @@ def get_best_document_score(
     matches: list[dict],
 ) -> float:
 
-    scores = []
+    scores: list[float] = []
 
     for match in matches:
 
+        if not isinstance(
+            match,
+            dict,
+        ):
+            continue
+
         try:
 
-            scores.append(
-                float(
-                    match.get(
-                        "score",
-                        0.0,
-                    )
+            score = float(
+                match.get(
+                    "score",
+                    0.0,
                 )
+            )
+
+            scores.append(
+                score
             )
 
         except (
             TypeError,
             ValueError,
         ):
-            pass
 
-    return (
-        max(scores)
-        if scores
-        else 0.0
-    )
+            continue
+
+    if scores:
+        return max(scores)
+
+    return 0.0
 
 
-# =========================================================
+# ============================================================
 # RAG NODE
-# =========================================================
+# ============================================================
 
 def rag_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    state = update_web_url_state(
+        state
+    )
+
+    query = safe_text(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
-    selected_document = (
+    selected_document = safe_text(
         state.get(
             "selected_document",
             "",
         )
-        or ""
-    ).strip()
+    )
 
     history = safe_history(
         state
@@ -173,6 +400,8 @@ def rag_node(
             "sources": [],
 
             "rag_found": False,
+
+            "knowledge_found": False,
         }
 
     print(
@@ -190,25 +419,23 @@ def rag_node(
     )
 
     print(
-        "Retrieval scope: ENTIRE KNOWLEDGE BASE"
+        "Scope: ENTIRE KNOWLEDGE BASE",
     )
 
-    # =====================================================
+    # ========================================================
     # RETRIEVE
-    # =====================================================
+    # ========================================================
 
     matches = get_document_matches(
         query
     )
 
-    best_score = (
-        get_best_document_score(
-            matches
-        )
+    best_score = get_best_document_score(
+        matches
     )
 
     print(
-        "Retrieved chunks:",
+        "Retrieved:",
         len(matches),
     )
 
@@ -217,15 +444,30 @@ def rag_node(
         best_score,
     )
 
-    # =====================================================
-    # NO MATCH
-    # =====================================================
+    # ========================================================
+    # RELEVANCE CHECK
+    # ========================================================
 
-    if not matches:
+    if (
+        not matches
+        or best_score < RAG_RELEVANCE_THRESHOLD
+    ):
 
         print(
-            "[RAG] No knowledge-base match."
+            "[RAG] No sufficiently relevant KB result."
         )
+
+        # IMPORTANT:
+        #
+        # Do NOT directly call web_node here.
+        #
+        # The graph.py conditional edge:
+        #
+        # rag -> web
+        #
+        # will handle the fallback.
+        #
+        # This prevents the web node from running twice.
 
         return {
             **state,
@@ -236,69 +478,37 @@ def rag_node(
 
             "sources": [],
 
-            "relevance_score": 0.0,
-
             "rag_found": False,
 
-            "fallback_reason": (
-                "No relevant knowledge-base match."
-            ),
-        }
-
-    # =====================================================
-    # THRESHOLD
-    # =====================================================
-
-    if (
-        best_score
-        < RAG_RELEVANCE_THRESHOLD
-    ):
-
-        print(
-            "[RAG] Below relevance threshold."
-        )
-
-        return {
-            **state,
-
-            "route": "rag",
-
-            "answer": "",
-
-            "sources": matches,
+            "knowledge_found": False,
 
             "relevance_score": best_score,
 
-            "rag_found": False,
+            "fallback_to_web": True,
 
             "fallback_reason": (
-                "Knowledge-base relevance below threshold."
+                "No sufficiently relevant "
+                "knowledge-base information."
             ),
         }
 
-    # =====================================================
-    # GENERATE
-    # =====================================================
+    # ========================================================
+    # DOCUMENT RAG
+    # ========================================================
 
     try:
 
         result = document_rag(
-
             query=query,
-
-            selected_document=(
-                selected_document
-            ),
-
+            selected_document=selected_document,
             history=history,
-
             documents=matches,
         )
 
     except Exception as error:
 
         print(
-            "[RAG GENERATION ERROR]",
+            "[DOCUMENT RAG ERROR]",
             repr(error),
         )
 
@@ -311,14 +521,24 @@ def rag_node(
 
             "sources": matches,
 
+            "rag_found": False,
+
+            "knowledge_found": False,
+
             "relevance_score": best_score,
 
-            "rag_found": False,
+            "fallback_to_web": True,
 
             "fallback_reason": (
                 "Document answer generation failed."
             ),
+
+            "error": str(error),
         }
+
+    # ========================================================
+    # VALIDATE RESULT
+    # ========================================================
 
     if not isinstance(
         result,
@@ -334,43 +554,59 @@ def rag_node(
 
             "sources": matches,
 
+            "rag_found": False,
+
+            "knowledge_found": False,
+
             "relevance_score": best_score,
 
-            "rag_found": False,
+            "fallback_to_web": True,
+
+            "fallback_reason": (
+                "Invalid document RAG result."
+            ),
         }
 
-    answer = (
+    # ========================================================
+    # EXTRACT
+    # ========================================================
+
+    answer = safe_text(
         result.get(
             "answer",
             "",
         )
-        or ""
-    ).strip()
+    )
 
-    sources = (
+    relevant = bool(
         result.get(
-            "sources",
-            [],
+            "relevant",
+            False,
         )
-        or matches
     )
 
-    relevant = result.get(
-        "relevant",
-        False,
+    sources = result.get(
+        "sources",
+        [],
     )
 
-    # =====================================================
-    # NOT RELEVANT
-    # =====================================================
+    if not isinstance(
+        sources,
+        list,
+    ):
+        sources = matches
+
+    # ========================================================
+    # NOT SUFFICIENT
+    # ========================================================
 
     if (
-        relevant is False
+        not relevant
         or not answer
     ):
 
         print(
-            "[RAG] Answer not found."
+            "[RAG] Retrieved chunks were not sufficient."
         )
 
         return {
@@ -382,22 +618,23 @@ def rag_node(
 
             "sources": sources,
 
-            "selected_document": (
-                selected_document
-            ),
-
-            "document_context": bool(
-                selected_document
-            ),
-
             "relevance_score": best_score,
 
             "rag_found": False,
+
+            "knowledge_found": False,
+
+            "fallback_to_web": True,
+
+            "fallback_reason": (
+                "Knowledge-base retrieval was "
+                "not sufficient to answer."
+            ),
         }
 
-    # =====================================================
+    # ========================================================
     # SUCCESS
-    # =====================================================
+    # ========================================================
 
     print(
         "[RAG] SUCCESS"
@@ -412,9 +649,7 @@ def rag_node(
 
         "sources": sources,
 
-        "selected_document": (
-            selected_document
-        ),
+        "selected_document": selected_document,
 
         "document_context": bool(
             selected_document
@@ -423,39 +658,49 @@ def rag_node(
         "relevance_score": best_score,
 
         "rag_found": True,
+
+        "knowledge_found": True,
+
+        "fallback_to_web": False,
     }
 
 
-# =========================================================
-# GENERAL
-# =========================================================
+# ============================================================
+# GENERAL NODE
+# ============================================================
 
 def general_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    query = safe_text(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
     history = safe_history(
         state
     )
 
     prompt = f"""
-You are a helpful general AI assistant.
+You are a helpful AI assistant.
 
-CONVERSATION:
+Conversation:
 {build_history_text(history)}
 
-USER:
+User:
 {query}
 
-Answer naturally and directly.
+Respond naturally and appropriately.
+
+For greetings, respond conversationally.
+For thanks, respond naturally.
+For normal questions, answer directly.
+
+Do not pretend to have searched the web.
+Do not mention internal routing.
 """
 
     try:
@@ -464,72 +709,76 @@ Answer naturally and directly.
             prompt
         )
 
-        answer = (
-            answer or ""
-        ).strip()
-
-        if answer:
-
-            return {
-                **state,
-
-                "route": "general",
-
-                "answer": answer,
-
-                "sources": [],
-            }
-
     except Exception as error:
 
         print(
-            "[GENERAL ERROR]",
+            "[GENERAL LLM ERROR]",
             repr(error),
         )
 
-    # If general LLM fails, use web.
-    return web_node(
-        {
+        return {
             **state,
 
-            "route": "web",
+            "route": "general",
+
+            "answer": (
+                "I'm having trouble generating a response "
+                "right now. Please try again in a moment."
+            ),
+
+            "sources": [],
+
+            "llm_error": str(error),
         }
-    )
+
+    return {
+        **state,
+
+        "route": "general",
+
+        "answer": safe_text(
+            answer
+        ),
+
+        "sources": [],
+    }
 
 
-# =========================================================
-# GREETING
-# =========================================================
+# ============================================================
+# GREETING NODE
+# ============================================================
 
 def greeting_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    query = safe_text(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
     history = safe_history(
         state
     )
 
     prompt = f"""
-You are a friendly AI assistant.
+You are a friendly conversational AI assistant.
 
-CONVERSATION:
+Conversation:
 {build_history_text(history)}
 
-USER:
+User:
 {query}
 
-Respond naturally to the user.
+Respond naturally to what the user said.
 
-Do not give a generic fixed greeting.
-Adapt your response to what the user said.
+Do not use a fixed greeting template.
+Do not assume the user said a specific greeting.
+Understand the meaning and tone of the message.
+
+Keep a simple greeting conversational and concise.
 """
 
     try:
@@ -538,47 +787,55 @@ Adapt your response to what the user said.
             prompt
         )
 
-        answer = (
-            answer or ""
-        ).strip()
-
     except Exception as error:
 
         print(
-            "[GREETING ERROR]",
+            "[GREETING LLM ERROR]",
             repr(error),
         )
 
-        answer = (
-            "Hello! How can I help you?"
-        )
+        return {
+            **state,
+
+            "route": "greeting",
+
+            "answer": (
+                "I'm having trouble responding "
+                "right now. Please try again."
+            ),
+
+            "sources": [],
+
+            "llm_error": str(error),
+        }
 
     return {
         **state,
 
         "route": "greeting",
 
-        "answer": answer,
+        "answer": safe_text(
+            answer
+        ),
 
         "sources": [],
     }
 
 
-# =========================================================
-# WEB SEARCH
-# =========================================================
+# ============================================================
+# WEB SEARCH NODE
+# ============================================================
 
 def web_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    query = safe_text(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
     if not query:
 
@@ -593,7 +850,7 @@ def web_node(
         }
 
     print(
-        "\n================ WEB NODE ================"
+        "\n================ WEB SEARCH ================"
     )
 
     print(
@@ -612,154 +869,10 @@ def web_node(
             max_results=5,
         )
 
-        if not isinstance(
-            result,
-            dict,
-        ):
-
-            return {
-                **state,
-
-                "route": "web",
-
-                "answer": str(result),
-
-                "sources": [],
-            }
-
-        answer = (
-            result.get(
-                "answer",
-                "",
-            )
-            or ""
-        ).strip()
-
-        sources = (
-            result.get(
-                "sources",
-                [],
-            )
-            or []
-        )
-
-        if answer:
-
-            return {
-                **state,
-
-                "route": "web",
-
-                "answer": answer,
-
-                "sources": sources,
-
-                "web_context": False,
-            }
-
-        # -------------------------------------------------
-        # SOURCE SYNTHESIS
-        # -------------------------------------------------
-
-        source_parts = []
-
-        for index, source in enumerate(
-            sources[:5],
-            start=1,
-        ):
-
-            if not isinstance(
-                source,
-                dict,
-            ):
-                continue
-
-            source_parts.append(
-                f"""
-SOURCE {index}
-
-TITLE:
-{source.get("title", "")}
-
-CONTENT:
-{source.get(
-    "snippet",
-    source.get(
-        "content",
-        source.get(
-            "text",
-            "",
-        ),
-    ),
-)}
-
-URL:
-{source.get(
-    "url",
-    source.get(
-        "link",
-        "",
-    ),
-)}
-"""
-            )
-
-        if source_parts:
-
-            prompt = f"""
-Answer the user's question using ONLY
-the following web search results.
-
-USER:
-{query}
-
-RESULTS:
-{"".join(source_parts)}
-
-Do not invent unsupported facts.
-"""
-
-            generated = llm.generate(
-                prompt
-            )
-
-            generated = (
-                generated or ""
-            ).strip()
-
-            if generated:
-
-                return {
-                    **state,
-
-                    "route": "web",
-
-                    "answer": generated,
-
-                    "sources": sources,
-
-                    "web_context": False,
-                }
-
-        return {
-            **state,
-
-            "route": "web",
-
-            "answer": (
-                "I found web results, but "
-                "couldn't generate a reliable answer."
-            ),
-
-            "sources": sources,
-
-            "web_context": False,
-        }
-
     except Exception as error:
 
         print(
-            "[WEB NODE ERROR]",
+            "[WEB SEARCH ERROR]",
             repr(error),
         )
 
@@ -774,38 +887,138 @@ Do not invent unsupported facts.
             ),
 
             "sources": [],
+
+            "error": str(error),
         }
 
+    # ========================================================
+    # INVALID RESULT
+    # ========================================================
 
-# =========================================================
-# WEB RAG
-# =========================================================
+    if not isinstance(
+        result,
+        dict,
+    ):
 
-def web_rag_node(
-    state: AgentState,
-) -> AgentState:
+        return {
+            **state,
 
-    query = (
-        state.get(
-            "query",
+            "route": "web",
+
+            "answer": safe_text(
+                result
+            ),
+
+            "sources": [],
+        }
+
+    # ========================================================
+    # RESULT
+    # ========================================================
+
+    answer = safe_text(
+        result.get(
+            "answer",
             "",
         )
-        or ""
-    ).strip()
-
-    web_url = (
-        state.get(
-            "web_url",
-            "",
-        )
-        or ""
-    ).strip()
-
-    history = safe_history(
-        state
     )
 
-    if not web_url:
+    sources = result.get(
+        "sources",
+        [],
+    )
+
+    if not isinstance(
+        sources,
+        list,
+    ):
+        sources = []
+
+    # ========================================================
+    # SEARCH TOOL ALREADY GENERATED ANSWER
+    # ========================================================
+
+    if answer:
+
+        return {
+            **state,
+
+            "route": "web",
+
+            "answer": answer,
+
+            "sources": sources,
+
+            "web_context": False,
+        }
+
+    # ========================================================
+    # BUILD SEARCH CONTEXT
+    # ========================================================
+
+    source_parts: list[str] = []
+
+    for index, source in enumerate(
+        sources[:5],
+        start=1,
+    ):
+
+        if not isinstance(
+            source,
+            dict,
+        ):
+            continue
+
+        title = safe_text(
+            source.get(
+                "title",
+                "",
+            )
+        )
+
+        content = safe_text(
+            source.get(
+                "snippet",
+                source.get(
+                    "content",
+                    source.get(
+                        "text",
+                        "",
+                    ),
+                ),
+            )
+        )
+
+        url = safe_text(
+            source.get(
+                "url",
+                source.get(
+                    "link",
+                    "",
+                ),
+            )
+        )
+
+        source_parts.append(
+            f"""
+SOURCE {index}
+
+TITLE:
+{title}
+
+CONTENT:
+{content}
+
+URL:
+{url}
+"""
+        )
+
+    # ========================================================
+    # NO RESULTS
+    # ========================================================
+
+    if not source_parts:
 
         return {
             **state,
@@ -813,13 +1026,144 @@ def web_rag_node(
             "route": "web",
 
             "answer": (
-                "No active webpage is available."
+                "I couldn't find useful web results "
+                "for that question."
             ),
 
             "sources": [],
-
-            "web_context": False,
         }
+
+    # ========================================================
+    # SYNTHESIS
+    # ========================================================
+
+    prompt = f"""
+Answer the user's question using ONLY the supplied web
+search results.
+
+USER QUESTION:
+{query}
+
+WEB RESULTS:
+{"".join(source_parts)}
+
+Rules:
+
+- Do not invent facts.
+- Do not use unsupported information.
+- Give a direct answer.
+- Do not mention internal routing.
+"""
+
+    try:
+
+        generated = llm.generate(
+            prompt
+        )
+
+    except Exception as error:
+
+        print(
+            "[WEB SYNTHESIS ERROR]",
+            repr(error),
+        )
+
+        return {
+            **state,
+
+            "route": "web",
+
+            "answer": (
+                "I found web results, but I couldn't "
+                "generate the answer right now."
+            ),
+
+            "sources": sources,
+
+            "llm_error": str(error),
+        }
+
+    return {
+        **state,
+
+        "route": "web",
+
+        "answer": safe_text(
+            generated
+        ),
+
+        "sources": sources,
+
+        "web_context": False,
+    }
+
+
+# ============================================================
+# WEB RAG NODE
+# ============================================================
+
+def web_rag_node(
+    state: AgentState,
+) -> AgentState:
+
+    state = update_web_url_state(
+        state
+    )
+
+    query = safe_text(
+        state.get(
+            "query",
+            "",
+        )
+    )
+
+    history = safe_history(
+        state
+    )
+
+    active_url = resolve_active_web_url(
+        state
+    )
+
+    print(
+        "\n================ WEB RAG NODE ================"
+    )
+
+    print(
+        "Query:",
+        query,
+    )
+
+    print(
+        "Active URL:",
+        active_url or "NONE",
+    )
+
+    # ========================================================
+    # NO URL
+    # ========================================================
+
+    if not active_url:
+
+        print(
+            "[WEB RAG] No active URL."
+        )
+
+        return web_node(
+            {
+                **state,
+
+                "route": "web",
+
+                "web_context": False,
+
+                "fallback_to_web": True,
+            }
+        )
+
+    # ========================================================
+    # WEB RAG
+    # ========================================================
 
     try:
 
@@ -828,11 +1172,8 @@ def web_rag_node(
         )
 
         result = web_rag(
-
             query=query,
-
-            url=web_url,
-
+            url=active_url,
             history=history,
         )
 
@@ -849,16 +1190,24 @@ def web_rag_node(
             "route": "web_rag",
 
             "answer": (
-                "I couldn't retrieve and analyze "
-                "the webpage right now."
+                "I couldn't retrieve the webpage "
+                "information right now."
             ),
 
             "sources": [],
 
-            "web_url": web_url,
-
             "web_context": True,
+
+            "web_url": active_url,
+
+            "active_web_url": active_url,
+
+            "error": str(error),
         }
+
+    # ========================================================
+    # INVALID RESULT
+    # ========================================================
 
     if not isinstance(
         result,
@@ -871,49 +1220,54 @@ def web_rag_node(
             "route": "web_rag",
 
             "answer": (
-                "I couldn't generate a reliable "
-                "answer from the webpage."
+                "I couldn't generate a response "
+                "from the webpage."
             ),
 
             "sources": [],
 
-            "web_url": web_url,
+            "web_url": active_url,
 
-            "web_context": True,
+            "active_web_url": active_url,
         }
 
-    answer = (
+    # ========================================================
+    # EXTRACT
+    # ========================================================
+
+    answer = safe_text(
         result.get(
             "answer",
             "",
         )
-        or ""
-    ).strip()
+    )
 
-    sources = (
+    sources = result.get(
+        "sources",
+        [],
+    )
+
+    if not isinstance(
+        sources,
+        list,
+    ):
+        sources = []
+
+    url = safe_text(
         result.get(
-            "sources",
-            [],
+            "url",
+            active_url,
         )
-        or []
     )
 
-    relevant = result.get(
-        "relevant",
-        False,
-    )
+    if not url:
+        url = active_url
 
-    title = (
+    relevant = bool(
         result.get(
-            "title",
-            "",
+            "relevant",
+            False,
         )
-        or ""
-    )
-
-    best_score = result.get(
-        "best_score",
-        None,
     )
 
     index_result = result.get(
@@ -927,34 +1281,73 @@ def web_rag_node(
     ):
         index_result = {}
 
+    # ========================================================
+    # FAILED
+    # ========================================================
+
+    if (
+        not relevant
+        or not answer
+    ):
+
+        print(
+            "[WEB RAG] No sufficient answer."
+        )
+
+        return web_node(
+            {
+                **state,
+
+                "route": "web",
+
+                "web_url": url,
+
+                "active_web_url": url,
+
+                "web_context": True,
+
+                "sources": sources,
+
+                "fallback_to_web": True,
+
+                "fallback_reason": (
+                    "Stored webpage did not contain "
+                    "sufficient information."
+                ),
+            }
+        )
+
+    # ========================================================
+    # SUCCESS
+    # ========================================================
+
     return {
         **state,
 
         "route": "web_rag",
 
-        "answer": (
-            answer
-            if relevant and answer
-            else (
-                "I couldn't find enough relevant "
-                "information on the provided webpage."
-            )
-        ),
+        "answer": answer,
 
         "sources": sources,
 
-        "web_url": web_url,
+        "web_url": url,
+
+        "active_web_url": url,
 
         "web_context": True,
 
-        "web_title": title,
+        "web_title": safe_text(
+            result.get(
+                "title",
+                "",
+            )
+        ),
 
-        "web_scraper": (
+        "web_scraper": safe_text(
             result.get(
                 "scraping_method",
                 "",
             )
-            or ""
         ),
 
         "web_chunks": index_result.get(
@@ -970,25 +1363,30 @@ def web_rag_node(
             == "indexed"
         ),
 
-        "web_relevance_score": best_score,
+        "web_relevance_score": (
+            result.get(
+                "best_score",
+                0.0,
+            )
+            or 0.0
+        ),
     }
 
 
-# =========================================================
-# WEATHER
-# =========================================================
+# ============================================================
+# WEATHER NODE
+# ============================================================
 
 def weather_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    query = safe_text(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
     try:
 
@@ -997,21 +1395,21 @@ def weather_node(
         )
 
         location_prompt = f"""
-Extract the city/location from this weather request.
+Extract the location from this weather request.
 
-Return ONLY the location name.
+Return only the location name.
 
-QUESTION:
+Question:
 {query}
 """
 
-        city = llm.generate(
-            location_prompt
+        city = safe_text(
+            llm.generate(
+                location_prompt
+            )
         )
 
-        city = (
-            city or ""
-        ).strip().strip(
+        city = city.strip(
             "\"'"
         )
 
@@ -1043,7 +1441,9 @@ QUESTION:
 
                 "route": "weather",
 
-                "answer": str(result),
+                "answer": safe_text(
+                    result
+                ),
 
                 "sources": [],
             }
@@ -1053,12 +1453,11 @@ QUESTION:
 
             "route": "weather",
 
-            "answer": (
+            "answer": safe_text(
                 result.get(
                     "answer",
                     "",
                 )
-                or ""
             ),
 
             "sources": (
@@ -1083,36 +1482,37 @@ QUESTION:
             "route": "weather",
 
             "answer": (
-                "I couldn't retrieve the weather."
+                "I couldn't retrieve the weather "
+                "right now."
             ),
 
             "sources": [],
+
+            "error": str(error),
         }
 
 
-# =========================================================
-# OCR
-# =========================================================
+# ============================================================
+# OCR NODE
+# ============================================================
 
 def ocr_node(
     state: AgentState,
 ) -> AgentState:
 
-    query = (
+    query = safe_text(
         state.get(
             "query",
             "",
         )
-        or ""
-    ).strip()
+    )
 
-    ocr_text = (
+    ocr_text = safe_text(
         state.get(
             "ocr_text",
             "",
         )
-        or ""
-    ).strip()
+    )
 
     history = safe_history(
         state
@@ -1126,27 +1526,26 @@ def ocr_node(
             "route": "ocr",
 
             "answer": (
-                "No image text is available."
+                "No OCR text is available."
             ),
 
             "sources": [],
         }
 
     prompt = f"""
-Answer the user's question using ONLY
-the OCR text below.
+Answer the user's question using ONLY the OCR text.
 
-OCR:
+OCR TEXT:
 {ocr_text}
 
-HISTORY:
+CONVERSATION:
 {build_history_text(history)}
 
 QUESTION:
 {query}
 
 If the answer is not present in the OCR text,
-say that it cannot be found in the image.
+say that it cannot be found in the uploaded image.
 """
 
     try:
@@ -1155,10 +1554,6 @@ say that it cannot be found in the image.
             prompt
         )
 
-        answer = (
-            answer or ""
-        ).strip()
-
     except Exception as error:
 
         print(
@@ -1166,16 +1561,29 @@ say that it cannot be found in the image.
             repr(error),
         )
 
-        answer = (
-            "I couldn't answer from the image."
-        )
+        return {
+            **state,
+
+            "route": "ocr",
+
+            "answer": (
+                "I couldn't answer from the uploaded "
+                "image right now."
+            ),
+
+            "sources": [],
+
+            "error": str(error),
+        }
 
     return {
         **state,
 
         "route": "ocr",
 
-        "answer": answer,
+        "answer": safe_text(
+            answer
+        ),
 
         "sources": [],
     }

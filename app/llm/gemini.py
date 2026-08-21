@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import time
 
@@ -5,92 +7,107 @@ from dotenv import load_dotenv
 from google import genai
 
 
-# =========================================================
+# ============================================================
 # ENVIRONMENT
-# =========================================================
+# ============================================================
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY"
+GEMINI_API_KEY = (
+    os.getenv("GEMINI_API_KEY")
+    or os.getenv("GOOGLE_API_KEY")
 )
 
 if not GEMINI_API_KEY:
-    raise ValueError(
-        "GEMINI_API_KEY not found in .env"
+    raise RuntimeError(
+        "GEMINI_API_KEY / GOOGLE_API_KEY was not found.\n"
+        "Put it in your .env file."
     )
 
 
-# =========================================================
+# ============================================================
 # CLIENT
-# =========================================================
+# ============================================================
 
 client = genai.Client(
     api_key=GEMINI_API_KEY
 )
 
 
-# =========================================================
+# ============================================================
+# CONFIG
+# ============================================================
+
+PRIMARY_MODEL = os.getenv(
+    "GEMINI_MODEL",
+    "gemini-3.6-flash",
+)
+
+FALLBACK_MODELS = [
+    "gemini-3.7-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
+
+
+# ============================================================
 # LLM
-# =========================================================
+# ============================================================
 
 class GeminiLLM:
 
     def __init__(
         self,
-        model: str = "gemini-3.5-flash",
+        model: str = PRIMARY_MODEL,
     ):
-
         self.model = model
 
-        # Fallback models.
-        #
-        # We don't blindly switch models immediately.
-        # First retry the primary model because 503 is often
-        # temporary.
         self.fallback_models = [
-            "gemini-3.6-flash",
-            "gemini-3.5-flash",
+            model_name
+            for model_name in FALLBACK_MODELS
+            if model_name != model
         ]
 
-
-    # =====================================================
+    # ========================================================
     # GENERATE
-    # =====================================================
+    # ========================================================
 
     def generate(
         self,
         prompt: str,
+        max_retries: int = 3,
     ) -> str:
 
-        if not prompt or not prompt.strip():
-
-            raise ValueError(
-                "Gemini prompt cannot be empty."
+        if not isinstance(prompt, str):
+            raise TypeError(
+                "Gemini prompt must be a string."
             )
 
         prompt = prompt.strip()
 
-        last_error = None
+        if not prompt:
+            raise ValueError(
+                "Gemini prompt cannot be empty."
+            )
 
-        # =================================================
+        errors: list[str] = []
+
+        # ====================================================
         # PRIMARY MODEL
-        # =================================================
+        # ====================================================
 
-        for attempt in range(3):
+        for attempt in range(max_retries):
 
             try:
 
                 print(
-                    f"[LLM] Model: {self.model} "
-                    f"| Attempt: {attempt + 1}/3"
+                    f"[LLM] model={self.model} "
+                    f"attempt={attempt + 1}/{max_retries}"
                 )
 
-                response = (
-                    client.models.generate_content(
-                        model=self.model,
-                        contents=prompt,
-                    )
+                response = client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
                 )
 
                 text = getattr(
@@ -99,81 +116,75 @@ class GeminiLLM:
                     None,
                 )
 
-                if text:
+                if text and text.strip():
 
                     return text.strip()
 
                 raise RuntimeError(
-                    "Gemini returned no text."
+                    "Gemini returned an empty response."
                 )
 
             except Exception as error:
 
-                last_error = error
+                error_text = str(error)
 
-                error_text = str(
-                    error
-                ).lower()
+                errors.append(
+                    f"{self.model}: {error_text}"
+                )
 
                 print(
                     "[LLM ERROR]",
                     repr(error),
                 )
 
-                # -----------------------------------------
-                # Retry temporary server/rate errors
-                # -----------------------------------------
+                lower = error_text.lower()
 
-                temporary_error = (
-                    "503" in error_text
-                    or "unavailable" in error_text
-                    or "429" in error_text
-                    or "resource exhausted" in error_text
-                    or "timeout" in error_text
+                retryable = any(
+                    marker in lower
+                    for marker in (
+                        "429",
+                        "503",
+                        "504",
+                        "unavailable",
+                        "resource exhausted",
+                        "timeout",
+                        "temporarily",
+                        "deadline",
+                    )
                 )
 
-                if not temporary_error:
-
+                if (
+                    not retryable
+                    or attempt == max_retries - 1
+                ):
                     break
 
-                if attempt < 2:
+                wait_time = 2 ** attempt
 
-                    wait_time = (
-                        2 ** attempt
-                    )
+                print(
+                    f"[LLM] retrying in {wait_time}s"
+                )
 
-                    print(
-                        f"[LLM] Temporary error. "
-                        f"Retrying in {wait_time}s..."
-                    )
+                time.sleep(
+                    wait_time
+                )
 
-                    time.sleep(
-                        wait_time
-                    )
-
-
-        # =================================================
+        # ====================================================
         # FALLBACK MODELS
-        # =================================================
+        # ====================================================
 
         for fallback_model in self.fallback_models:
-
-            # Don't repeat the primary model.
-            if fallback_model == self.model:
-                continue
 
             try:
 
                 print(
-                    "[LLM] Trying fallback model:",
+                    "[LLM] fallback model:",
                     fallback_model,
                 )
 
-                response = (
-                    client.models.generate_content(
-                        model=fallback_model,
-                        contents=prompt,
-                    )
+                response = client.models.generate_content(
+                    model=fallback_model,
+                    contents=prompt,
                 )
 
                 text = getattr(
@@ -182,23 +193,24 @@ class GeminiLLM:
                     None,
                 )
 
-                if text:
+                if text and text.strip():
 
                     print(
-                        "[LLM] Fallback model succeeded:",
+                        "[LLM] fallback succeeded:",
                         fallback_model,
                     )
 
                     return text.strip()
 
-                print(
-                    "[LLM] Fallback model returned no text:",
-                    fallback_model,
+                errors.append(
+                    f"{fallback_model}: empty response"
                 )
 
             except Exception as error:
 
-                last_error = error
+                errors.append(
+                    f"{fallback_model}: {error}"
+                )
 
                 print(
                     "[LLM FALLBACK ERROR]",
@@ -206,21 +218,18 @@ class GeminiLLM:
                     repr(error),
                 )
 
-                continue
-
-
-        # =================================================
+        # ====================================================
         # FINAL ERROR
-        # =================================================
+        # ====================================================
 
         raise RuntimeError(
-            "Gemini generation failed after "
-            "retries and fallback models."
-        ) from last_error
+            "Gemini generation failed.\n"
+            + "\n".join(errors)
+        )
 
 
-# =========================================================
+# ============================================================
 # SINGLE INSTANCE
-# =========================================================
+# ============================================================
 
 llm = GeminiLLM()
